@@ -1,0 +1,162 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class SSIM(nn.Module): # 두 이미지가 얼마나 비슷한가
+    def __init__(self, window_size = 3, C1 = 0.01 ** 2, C2 = 0.03 ** 2):
+        super(SSIM, self).__init__()
+        self.window_size = window_size # 윈도우 사이즈 
+        self.C1 = C1 # 밝기는 1%정도 차이나도 인간은 거의 똑같다 느낌
+        self.C2 = C2 # 분산은 3%정도 차이나도 인간은 거의 똑같다 느낌 
+
+    def forward(self, x, y): 
+        # x는 예측 이미지, y는 정답 이미지
+        # 밝기, 대비, 구조 세가지 요소로 비교
+
+        p = self.window_size // 2 # 패딩 크기
+
+        # pad를 통해 이미지 상하좌우에 p만큼 확장
+        # 거울처럼 이미지 끝이 1, 2, 3, 4라면 1, 2, 3, 4, 3, 2, 1 이렇게 확장함
+        # 이를 통해 avg이후에도 크기가 안줄음
+        x = F.pad(x, (p, p, p, p), mode='reflect') 
+        y = F.pad(y, (p, p, p, p), mode='reflect')
+
+        # mu는 밝기 
+        # avg_pool2d는 이미지에 윈도우를 두고 그 안의 모든 수의 평균을 구함
+        mu_x = F.avg_pool2d(x, self.window_size, 1)
+        mu_y = F.avg_pool2d(y, self.window_size, 1)
+
+        # sigma는 대비 [분산]
+        # 분산은 평균으로부터 얼마나 멀리 퍼져있는가의 척도
+        # 분산은 제곱의 평균 - 평균의 제곱
+        # 분산이 낮으면 평균에 몰려있음 -> 색 차이가 거의 없음 -> 대비가 낮음
+        # 분산이 높으면 평균에 멀리 떨어져있음 -> 색 차이 많음 -> 대비가 높음
+        # 대비의 목적은 물체의 경계선, 즉 선명함
+        sigma_x = F.avg_pool2d(x ** 2, self.window_size, 1) - mu_x ** 2
+        sigma_y = F.avg_pool2d(y ** 2, self.window_size, 1) - mu_y ** 2
+
+        # sigma_xy는 구조 [공분산]
+        # 공분산은 두 이미지 사이에서 픽셀들이 변하는 모양새가 서로 닮았나
+        # 공분산이 양이면 x가 밝아지는 지점에서 y도 밝아짐, 패턴이 일치
+        # 공분산이 음이면 x가 밝아지는 지점에서 y는 어두워짐, 패턴 반전
+        # 공분산이 0에 가까우면 x가 변할때 y는 아무 상관없이 변함, 패턴 불일치
+        # 구조는 윤곽선, 질감 무늬 등 여러가지가 종합된것
+        sigma_xy = F.avg_pool2d(x * y, self.window_size, 1) - mu_x * mu_y
+
+        # n은 (평균 밝기가 얼마나 일치하나) * (구조적으로 얼마나 유사하나), 둘이 얼마나 닮았나
+        # 곱하기로 연결되었기에 둘다 높으면 확 높아짐
+        # self.C1과 self.C2는 0이 되는것을 막기위한 대비책
+        n = (2 * mu_x * mu_y + self.C1) * (2 * sigma_xy + self.C2)
+
+        # n을 0~1로 정규화 해주기 위함이 목적, 두 이미지가 가질 수 있는 최대치
+        # 두 이미지가 완전히 같으면 평균이 같을 것이고 2A^2 = A^2 + A^2이다.
+        # 두 이미지가 완전히 같으면 분산이 같을 것이고 공분산도 같을 것이고
+        # 두 이미지가 완전히 같으면 분산과 공분산이 같으니 2 * A = A + A이다.
+        d = (mu_x ** 2 + mu_y ** 2 + self.C1) * (sigma_x + sigma_y + self.C2)
+
+        # 밝기 일치 * 구조적 일치를 0~1로 정규화한 값
+        # 현재는 이미지 크기만큼 ex) [B, 3, H, W]의 값이 반환됨
+        return n / d
+    
+        # 평군을 내고 1에 빼면 스칼라 값이 반환됨
+        # 같으면 손실이 0, 다르면 1 이렇게 반환됨
+        return 1 - (n / d).mean()
+
+class photometric_error(nn.Module):
+    def __init__(self):
+        super(photometric_error, self).__init__()
+        self.a = 0.85 # SSIM비율, 논문에 따름
+        self.ssim = SSIM()
+
+    def forward(self, image_A, image_B):
+        # A는 모델이 만든 사진
+        # B는 카메라로 찍은 사진 
+
+        ssim = self.ssim(image_B, image_A) # [B, 3, H, W]
+        
+        # 1 - ssim이게 오차임, 이게 0이면 좋은거임
+        # /2를 해주는 이유는 압축을 더 안전하게 하기 위해
+        # 0 ~ 1은 혹시 모를 안전장치
+        ssim = torch.clamp((1 - ssim) / 2, 0, 1).mean(1, keepdim=True) # [B, 1, H, W]
+
+        # 색상 픽셀끼리 빼고 절대값 씌움
+        l1 = torch.abs(image_A - image_B).mean(1, keepdim=True) # [B, 1, H, W]
+
+        # 황금 비율로 섞어서 반환
+        # 현재는 스칼라가 아닌 지도를 반환
+        pe = self.a * ssim + (1 - self.a) * l1 # [B, 1, H, W]
+
+        return pe
+
+class Minimum_Reprojection_Loss(nn.Module):
+    def __init__(self):
+        super(Minimum_Reprojection_Loss, self).__init__()
+        self.pe = photometric_error()
+
+    def forward(self, target_image, source_image, projected_image, C):
+        # target_image : [B, 3, H, W]
+        # projected_image : [B, 3, H, W]
+
+        B, _, H, W = target_image.shape
+
+        bg_mask = (target_image.sum(dim=1, keepdim=True) > 0).float()
+
+        C = torch.sigmoid(C)
+        C = C.transpose(1, 2).reshape(B, 1, 14, 14)
+        C = F.interpolate(C, size=(H, W), mode='bilinear', align_corners=False)
+
+        projected_pe = self.pe(target_image, projected_image) # [B, 1, H, W]
+        source_pe = self.pe(target_image, source_image) # [B, 1, H, W]
+
+        mask = (projected_pe < source_pe).float() # [B, 1, H, W]
+        mask = torch.clamp(mask, min=0.1) * bg_mask
+
+        weight_loss = projected_pe * mask * C # [B, 1, H, W]
+        reg_loss = -0.01 * torch.log(C + 1e-7) * mask
+        
+        return (weight_loss + reg_loss).sum() / (mask.sum() + 1e-8)
+    
+class Smooth_Loss(nn.Module):
+    def __init__(self):
+        super(Smooth_Loss, self).__init__()
+
+    def forward(self, X, image):
+        # X : [B, 3, 14, 14]
+        # image : [B, 3, H, W]
+
+        B, C, H, W = X.shape
+
+        image_low = F.interpolate(image, size=(H, W), mode='bilinear', align_corners=False)
+
+        mask = (image_low.sum(dim=1, keepdim=True) > 0).float()
+
+        # disp의 기울기 (x, y 방향)
+        mean_X = torch.abs(X).mean(dim=(1, 2, 3), keepdim=True) # [B, 1, 1, 1] 모든 거리의 평균
+        X = X / (mean_X + 1e-7) # 평균으로 나눔 -> 정규화 -> 평균이 1이 됨 -> 일관된 smooth loss 적용 가능
+
+        # [0 ~ N-1] - [1 ~ N] 바로 옆 픽셀의 거리와의 차이
+        X_dx = torch.abs(X[:, :, :, :-1] - X[:, :, :, 1:]) # 너비 깊이 [B, 1, H, W]
+        X_dy = torch.abs(X[:, :, :-1, :] - X[:, :, 1:, :]) # 높이 깊이 [B, 1, H, W]
+
+        # image의 기울기 (x, y 방향)
+        # [0 ~ N-1] - [1 ~ N] 바로 옆 픽셀과의 차이
+        # 기울기가 크다면 변화량이 큰것 -> 윤곽선이 있는것
+        image_dx = torch.abs(image_low[:, :, :, :-1] - image_low[:, :, :, 1:]).mean(1, keepdim=True) # [B, 1, H, W]
+        image_dy = torch.abs(image_low[:, :, :-1, :] - image_low[:, :, 1:, :]).mean(1, keepdim=True) # [B, 1, H, W]
+
+        # 가중치
+        # 변화량이 작으면 무한대 -> 윤곽선이 없다면 가중치 커짐
+        # 변화량이 크면 0에 가까워짐 -> 윤곽선이 있다면 가중치 작아짐
+        weights_x = torch.exp(-image_dx * 10.0)
+        weights_y = torch.exp(-image_dy * 10.0)
+
+        mask_x = mask[:, :, :, :-1] * mask[:, :, :, 1:] # 가로로 인접한 두 칸이 모두 물체인 경우
+        mask_y = mask[:, :, :-1, :] * mask[:, :, 1:, :] # 세로로 인접한 두 칸이 모두 물체인 경우
+
+        # 거리차이 * 가중치
+        # 윤곽선이 없는데 거리차이가 많다고 예측하면 손실 커짐
+        # 윤곽선이 없는데 거리차이가 적다고 예측하면 손실 작아짐
+        smoothness_x = (X_dx * weights_x) * mask_x
+        smoothness_y = (X_dy * weights_y) * mask_y
+        
+        return (smoothness_x.sum() + smoothness_y.sum()) / (mask_x.sum() + mask_y.sum() + 1e-8)
