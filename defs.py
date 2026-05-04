@@ -1,6 +1,47 @@
 import torch
 import torch.nn.functional as F
 import open3d as o3d
+import torchvision.utils as vutils
+import os
+
+def save_fixed_sample(model, dataset, epoch, save_path, device):
+    model.eval()
+    with torch.no_grad():
+        # 고정된 첫 번째 데이터 가져오기
+        sample = dataset[0]
+        curr_img = sample['current_image'].unsqueeze(0).to(device) # [1, 3, 224, 224]
+        next_img = sample['next_image'].unsqueeze(0).to(device) # [1, 3, 224, 224]
+
+        # 모델 추론
+        X1, _, _, _, MATRIX, _ = model(curr_img, next_img)
+
+        # 재투영 이미지 생성
+        projected_img, _ = get_projected_image(curr_img, next_img, X1, MATRIX)
+
+        depth = X1[:, :, 2].view(1, 1, 224, 224) # [1, 1, 14, 14]로 변환
+
+        depth_resized = depth
+
+        fg_mask = (curr_img[0].sum(dim=0, keepdim=True) > 0) # [1, 224, 224]
+        valid_depths = depth_resized[0][fg_mask]
+        
+        # 시각화를 위해 0~1 사이로 정규화 (가까운 곳은 밝게, 먼 곳은 어둡게)
+        depth_min = valid_depths.min()
+        depth_max = valid_depths.max()
+        depth_norm = (depth_resized - depth_min) / (depth_max - depth_min + 1e-8)
+        depth_norm = depth_norm * fg_mask.float()
+        
+        # 3채널로 복사 (이미지 결합을 위해)
+        depth_viz = depth_norm.repeat(1, 3, 1, 1)
+
+        # 시각화를 위해 두 이미지 결합 (가로로 붙이기)
+        # [1, 3, 224, 224] -> [3, 224, 448]
+        combined = torch.cat([curr_img[0], projected_img[0], depth_viz[0]], dim=2)
+        
+        # 이미지 저장 (0~1 범위 클리핑 및 저장)
+        vutils.save_image(combined, os.path.join(save_path, f'vis_epoch_{epoch}.png'))
+
+        print('saved image')
 
 def axis_angle_to_matrix(rot_vec):
     batch_size = rot_vec.shape[0]
@@ -28,49 +69,53 @@ def axis_angle_to_matrix(rot_vec):
 
 def get_projected_image(img1, img2, X, MATRIX):
     B, _, H, W = img1.shape
-
-    X_map = X.permute(0, 2, 1).view(B, 3, 14, 14)
-    X_dense = F.interpolate(X_map, size=(H, W), mode='bilinear', align_corners=False)
-    X_dense = X_dense.permute(0, 2, 3, 1).reshape(B, -1, 3) # [B, H * W, 3]
-
+    X_dense = X
     ones = torch.ones((B, X_dense.shape[1], 1), device=X.device)
     X_homo = torch.cat([X_dense, ones], dim=-1)
 
     projected_points = torch.matmul(X_homo, MATRIX.transpose(1, 2)) # [B, H * W, 4]
-    z = projected_points[..., 2].clamp(min=1e-3)
 
+    raw_z = projected_points[..., 2]
+    z = raw_z.clamp(min=1e-3)
     u = projected_points[..., 0] / z
     v = projected_points[..., 1] / z
 
-    print(f"U range: {u.min().item():.2f} ~ {u.max().item():.2f}")
-    print(f"V range: {v.min().item():.2f} ~ {v.max().item():.2f}")
+    # print(f"U range: {u.min().item():.2f} ~ {u.max().item():.2f}")
+    # print(f"V range: {v.min().item():.2f} ~ {v.max().item():.2f}")
 
-    fx = MATRIX[0, 0, 0].item()
-    fy = MATRIX[0, 1, 1].item()
-    print(f"Focal Length: fx={fx:.2f}, fy={fy:.2f}")
+    # fx = MATRIX[0, 0, 0].item()
+    # fy = MATRIX[0, 1, 1].item()
+    # print(f"Focal Length: fx={fx:.2f}, fy={fy:.2f}")
 
-    # 2. 투영 전 3D 포인트의 분포 확인
-    x_mean, x_std = X_homo[..., 0].mean().item(), X_homo[..., 0].std().item()
-    z_mean, z_std = X_homo[..., 2].mean().item(), X_homo[..., 2].std().item()
-    print(f"3D Point X mean: {x_mean:.4f}, std: {x_std:.4f}")
-    print(f"3D Point Z mean: {z_mean:.4f}, std: {z_std:.4f}")
+    # # 2. 투영 전 3D 포인트의 분포 확인
+    # x_mean, x_std = X_homo[..., 0].mean().item(), X_homo[..., 0].std().item()
+    # z_mean, z_std = X_homo[..., 2].mean().item(), X_homo[..., 2].std().item()
+    # print(f"3D Point X mean: {x_mean:.4f}, std: {x_std:.4f}")
+    # print(f"3D Point Z mean: {z_mean:.4f}, std: {z_std:.4f}")
 
     grid_u = (u / (W - 1)) * 2.0 - 1.0
     grid_v = (v / (H - 1)) * 2.0 - 1.0
     grid = torch.stack([grid_u, grid_v], dim=-1).view(B, H, W, 2)
 
-    spread_loss_u = F.relu(0.4 - grid_u.std())
-    spread_loss_v = F.relu(0.4 - grid_v.std())
-    spread_loss_2d = spread_loss_u + spread_loss_v
-
     projected_img = F.grid_sample(img2, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
 
-    return projected_img, spread_loss_2d
+    valid_z = (raw_z > 0).float()
+    valid_u = ((grid_u >= -1.0) & (grid_u <= 1.0)).float()
+    valid_v = ((grid_v >= -1.0) & (grid_v <= 1.0)).float()
+    
+    valid_mask = (valid_z * valid_u * valid_v).view(B, 1, H, W)
 
-def visualize_points(X):
+    return projected_img, valid_mask
+
+def visualize_points(X, image, z_scale=5.0):
     X = X.detach().cpu().numpy()
+    X[:, 2] = X[:, 2] * z_scale
+    image = image.detach().cpu()
+    colors = image.permute(1, 2, 0).reshape(-1, 3).numpy()
+
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(X)
+    pcd.colors = o3d.utility.Vector3dVector(colors)
     o3d.visualization.draw_geometries([pcd])
 
 def load_croco_weights_to_dust3r(model, checkpoint_path):

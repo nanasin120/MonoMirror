@@ -93,7 +93,7 @@ class Minimum_Reprojection_Loss(nn.Module):
         super(Minimum_Reprojection_Loss, self).__init__()
         self.pe = photometric_error()
 
-    def forward(self, target_image, source_image, projected_image, C):
+    def forward(self, target_image, source_image, projected_image, C, valid_mask):
         # target_image : [B, 3, H, W]
         # projected_image : [B, 3, H, W]
 
@@ -101,15 +101,14 @@ class Minimum_Reprojection_Loss(nn.Module):
 
         bg_mask = (target_image.sum(dim=1, keepdim=True) > 0).float()
 
-        C = torch.sigmoid(C)
-        C = C.transpose(1, 2).reshape(B, 1, 14, 14)
-        C = F.interpolate(C, size=(H, W), mode='bilinear', align_corners=False)
+        C = C.transpose(1, 2).reshape(B, 1, 224, 224)
 
         projected_pe = self.pe(target_image, projected_image) # [B, 1, H, W]
         source_pe = self.pe(target_image, source_image) # [B, 1, H, W]
 
         mask = (projected_pe < source_pe).float() # [B, 1, H, W]
         mask = torch.clamp(mask, min=0.1) * bg_mask
+        mask = mask * valid_mask
 
         weight_loss = projected_pe * mask * C # [B, 1, H, W]
         reg_loss = -0.01 * torch.log(C + 1e-7) * mask
@@ -121,14 +120,9 @@ class Smooth_Loss(nn.Module):
         super(Smooth_Loss, self).__init__()
 
     def forward(self, X, image):
-        # X : [B, 3, 14, 14]
-        # image : [B, 3, H, W]
-
         B, C, H, W = X.shape
 
-        image_low = F.interpolate(image, size=(H, W), mode='bilinear', align_corners=False)
-
-        mask = (image_low.sum(dim=1, keepdim=True) > 0).float()
+        mask = (image.sum(dim=1, keepdim=True) > 0).float()
 
         # disp의 기울기 (x, y 방향)
         mean_X = torch.abs(X).mean(dim=(1, 2, 3), keepdim=True) # [B, 1, 1, 1] 모든 거리의 평균
@@ -141,8 +135,8 @@ class Smooth_Loss(nn.Module):
         # image의 기울기 (x, y 방향)
         # [0 ~ N-1] - [1 ~ N] 바로 옆 픽셀과의 차이
         # 기울기가 크다면 변화량이 큰것 -> 윤곽선이 있는것
-        image_dx = torch.abs(image_low[:, :, :, :-1] - image_low[:, :, :, 1:]).mean(1, keepdim=True) # [B, 1, H, W]
-        image_dy = torch.abs(image_low[:, :, :-1, :] - image_low[:, :, 1:, :]).mean(1, keepdim=True) # [B, 1, H, W]
+        image_dx = torch.abs(image[:, :, :, :-1] - image[:, :, :, 1:]).mean(1, keepdim=True) # [B, 1, H, W]
+        image_dy = torch.abs(image[:, :, :-1, :] - image[:, :, 1:, :]).mean(1, keepdim=True) # [B, 1, H, W]
 
         # 가중치
         # 변화량이 작으면 무한대 -> 윤곽선이 없다면 가중치 커짐

@@ -8,7 +8,7 @@ def process_cup_images(img_dir, save_dir, file_indices):
 
     for idx in file_indices:
         # 파일명 규칙에 맞게 수정 (예: image_30.png)
-        filename = f"data_{idx}.jpg" 
+        filename = f"000{idx}.jpg" 
         input_path = os.path.join(img_dir, filename)
         output_path = os.path.join(save_dir, f"black_bg_{filename}")
 
@@ -33,8 +33,8 @@ def process_cup_images(img_dir, save_dir, file_indices):
         print(f"완료: {output_path}")
 
 # 실행부
-img_folder = 'cola'           # 원본 폴더
-save_folder = 'cola_cleaned'   # 결과 폴더
-indices = [1, 2]            # 처리할 이미지 번호
+img_folder = 'cup'           # 원본 폴더
+save_folder = 'cup_cleaned'   # 결과 폴더
+indices = [80, 90]            # 처리할 이미지 번호
 
 process_cup_images(img_folder, save_folder, indices)

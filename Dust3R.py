@@ -52,7 +52,7 @@ class Head(nn.Module):
         self.MLP = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.GELU(),
-            nn.Linear(d_model, 4)
+            nn.Linear(d_model, 2)
         )
 
         nn.init.normal_(self.MLP[-1].weight, std=1e-4)
@@ -62,18 +62,15 @@ class Head(nn.Module):
         #final_G = all_G[-1]
         out = self.MLP(all_G)
 
-        X_coord = out[..., 0:1] * 0.1  
-        Y_coord = out[..., 1:2] * 0.1  
-        Z_coord = out[..., 2:3]
+        Z_coord = out[..., 0:1]
         
-        Z_coord_safe = torch.sigmoid(Z_coord) * 2.0 + 0.3
+        Z_coord_safe = F.softplus(Z_coord) + 0.1
 
-        X = torch.cat([X_coord, Y_coord, Z_coord_safe], dim=-1)
-        C = out[..., 3:]
+        C = out[..., 1:2]
         
-        C = 1 + torch.exp(C)
+        C = F.softplus(C) + 1e-6
 
-        return X, C
+        return Z_coord_safe, C
     
 class ProjectionHead(nn.Module):
     def __init__(self, d_model=768):
@@ -87,6 +84,7 @@ class ProjectionHead(nn.Module):
         )
         nn.init.normal_(self.intrinsic_mlp[-1].weight, mean=0.0, std=1e-5)
         nn.init.zeros_(self.intrinsic_mlp[-1].bias)
+        with torch.no_grad(): self.intrinsic_mlp[-1].bias[:] = 150.0
 
         self.extrinsic_mlp = nn.Sequential(
             nn.Linear(d_model * 2, 256),
@@ -95,6 +93,7 @@ class ProjectionHead(nn.Module):
         )
         nn.init.normal_(self.extrinsic_mlp[-1].weight, mean=0.0, std=1e-5)
         nn.init.zeros_(self.extrinsic_mlp[-1].bias)
+        with torch.no_grad(): self.extrinsic_mlp[-1].bias[:] = 150.0
 
     def forward(self, F1, F2):
         B = F1.shape[0]
@@ -193,6 +192,15 @@ class Dust3R(nn.Module):
 
         self.Head = Head()
 
+        H, W = 224, 224
+        y, x = torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij')
+
+        u_flat = x.float().view(-1, 1)
+        v_flat = y.float().view(-1, 1)
+
+        self.register_buffer('u', u_flat)
+        self.register_buffer('v', v_flat)
+
     def forward(self, image1, image2):
         # image1 : [B, 3, H, W] [B, 3, 224, 224]
         # image2 : [B, 3, H, W] [B, 3, 224, 224]
@@ -220,10 +228,23 @@ class Dust3R(nn.Module):
         G1_flat = G1_224x224.view(B, C, -1).transpose(1, 2) # [B, 50176, 64]
         G2_flat = G2_224x224.view(B, C, -1).transpose(1, 2) # [B, 50176, 64]
 
-        # x, y는 보폭이 0.1이고
         # z는 0.3 ~ 
-        X1, C1 = self.Head(G1_flat)
-        X2, C2 = self.Head(G2_flat)
+        Z1, C1 = self.Head(G1_flat)
+        Z2, C2 = self.Head(G2_flat)
+
+        fx = K[:, 0, 0].view(B, 1, 1)
+        fy = K[:, 1, 1].view(B, 1, 1)
+        cx = K[:, 0, 2].view(B, 1, 1)
+        cy = K[:, 1, 2].view(B, 1, 1)
+
+        X1 = (self.u - cx) * Z1 / fx
+        Y1 = (self.v - cy) * Z1 / fy
+        XYZ1 = torch.cat([X1, Y1, Z1], dim=-1) # 최종 3D 좌표 [B, 50176, 3]
+
+        # 이미지 2의 역투영 (X, Y 계산) - K는 공유한다고 가정
+        X2 = (self.u - cx) * Z2 / fx
+        Y2 = (self.v - cy) * Z2 / fy
+        XYZ2 = torch.cat([X2, Y2, Z2], dim=-1) # 최종 3D 좌표 [B, 50176, 3]
 
         B = K.shape[0]
         K44 = torch.eye(4, device=K.device).unsqueeze(0).repeat(B, 1, 1)
@@ -232,8 +253,8 @@ class Dust3R(nn.Module):
         MATRIX = torch.bmm(K44, E)[:, :3, :]
         MATRIX_INV = torch.bmm(K44, E_INV)[:, :3, :]
 
-        print(f"True fx: {K[0, 0, 0].item():.2f}, True fy: {K[0, 1, 1].item():.2f}")
-        print(f"K : {K}")
-        print(f"E : {E}")
+        # print(f"True fx: {K[0, 0, 0].item():.2f}, True fy: {K[0, 1, 1].item():.2f}")
+        # print(f"K : {K}")
+        # print(f"E : {E}")
 
-        return X1, C1, X2, C2, MATRIX, MATRIX_INV
+        return XYZ1, C1, XYZ2, C2, MATRIX, MATRIX_INV
