@@ -15,7 +15,6 @@ class ImageDataset(Dataset):
         ])
         
     def __len__(self):
-        #return 1
         return len(self.img_files) - self.frame_interval
     
     def __getitem__(self, idx):

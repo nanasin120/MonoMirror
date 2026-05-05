@@ -107,9 +107,10 @@ def get_projected_image(img1, img2, X, MATRIX):
 
     return projected_img, valid_mask
 
-def visualize_points(X, image, z_scale=5.0):
+def visualize_points(X, image, z_scale=10.0):
     X = X.detach().cpu().numpy()
     X[:, 2] = X[:, 2] * z_scale
+    X[:, 1] = X[:, 1] * -1.0
     image = image.detach().cpu()
     colors = image.permute(1, 2, 0).reshape(-1, 3).numpy()
 

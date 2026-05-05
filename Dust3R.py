@@ -62,12 +62,14 @@ class Head(nn.Module):
         #final_G = all_G[-1]
         out = self.MLP(all_G)
 
-        Z_coord = out[..., 0:1]
+        disp_raw = torch.sigmoid(out[..., 0:1])
+        min_disp = 0.01 # 100
+        max_disp = 10.0 # 0.1
+        scaled_disp = min_disp + (max_disp - min_disp) * disp_raw
         
-        Z_coord_safe = F.softplus(Z_coord) + 0.1
+        Z_coord_safe = 1.0 / scaled_disp
 
         C = out[..., 1:2]
-        
         C = F.softplus(C) + 1e-6
 
         return Z_coord_safe, C
@@ -93,7 +95,7 @@ class ProjectionHead(nn.Module):
         )
         nn.init.normal_(self.extrinsic_mlp[-1].weight, mean=0.0, std=1e-5)
         nn.init.zeros_(self.extrinsic_mlp[-1].bias)
-        with torch.no_grad(): self.extrinsic_mlp[-1].bias[:] = 150.0
+        with torch.no_grad(): self.extrinsic_mlp[-1].bias[:] = 0.1
 
     def forward(self, F1, F2):
         B = F1.shape[0]
@@ -256,5 +258,6 @@ class Dust3R(nn.Module):
         # print(f"True fx: {K[0, 0, 0].item():.2f}, True fy: {K[0, 1, 1].item():.2f}")
         # print(f"K : {K}")
         # print(f"E : {E}")
+        # print(f"Z min: {Z1.min().item():.4f}, Z max: {Z1.max().item():.4f}, 갭: {(Z1.max() - Z1.min()).item():.4f}")
 
         return XYZ1, C1, XYZ2, C2, MATRIX, MATRIX_INV

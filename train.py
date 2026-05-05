@@ -15,20 +15,22 @@ if not os.path.exists(model_save_path): os.makedirs(model_save_path)
 img_save_path = r'./image_save'
 if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
-BATCH = 8
-EPOCH = 300
+BATCH = 4
+EPOCH = 10
 LEARNING_RATE = 1e-5
-IMAGE_SAVE_INTERVEL = 10
-WEIGHT_SAVE_INTERVEL = 100
+IMAGE_SAVE_INTERVEL = 1
+WEIGHT_SAVE_INTERVEL = 10
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-img_dir = r'cup_cleaned'
-full_dataset = ImageDataset(img_dir=img_dir, frame_interval=1)
+img_dir = r'cup'
+full_dataset = ImageDataset(img_dir=img_dir, frame_interval=10)
 
 dataloader = DataLoader(
     dataset=full_dataset,
     batch_size=BATCH,
-    shuffle=True
+    shuffle=True,
+    num_workers=4,
+    pin_memory=True
 )
 
 model = Dust3R().to(DEVICE)
