@@ -13,14 +13,12 @@ def save_fixed_sample(model, dataset, epoch, save_path, device):
         next_img = sample['next_image'].unsqueeze(0).to(device) # [1, 3, 224, 224]
 
         # 모델 추론
-        X1, _, _, _, MATRIX, _ = model(curr_img, next_img)
+        XYZ1, C1, D1, XYZ2, C2, D2, MATRIX, MATRIX_INV = model(curr_img, next_img)
 
         # 재투영 이미지 생성
-        projected_img, _ = get_projected_image(curr_img, next_img, X1, MATRIX)
+        projected_img, _ = get_projected_image(curr_img, next_img, XYZ1, MATRIX)
 
-        depth = X1[:, :, 2].view(1, 1, 224, 224) # [1, 1, 14, 14]로 변환
-
-        depth_resized = depth
+        depth_resized = D1.view(1, 1, 224, 224) # [1, 1, 14, 14]로 변환
 
         fg_mask = (curr_img[0].sum(dim=0, keepdim=True) > 0) # [1, 224, 224]
         valid_depths = depth_resized[0][fg_mask]
@@ -30,6 +28,8 @@ def save_fixed_sample(model, dataset, epoch, save_path, device):
         depth_max = valid_depths.max()
         depth_norm = (depth_resized - depth_min) / (depth_max - depth_min + 1e-8)
         depth_norm = depth_norm * fg_mask.float()
+
+        print(f"Disp min: {depth_min.item():.4f}, Disp max: {depth_max.item():.4f}, 갭: {(depth_max - depth_min).item():.4f}")
         
         # 3채널로 복사 (이미지 결합을 위해)
         depth_viz = depth_norm.repeat(1, 3, 1, 1)
@@ -45,7 +45,7 @@ def save_fixed_sample(model, dataset, epoch, save_path, device):
 
 def axis_angle_to_matrix(rot_vec):
     batch_size = rot_vec.shape[0]
-    angle = torch.norm(rot_vec, dim=-1, keepdim=True) + 1e-7
+    angle = torch.norm(rot_vec + 1e-7, dim=-1, keepdim=True)
     axis = rot_vec / angle
     
     cos_a = torch.cos(angle).unsqueeze(-1)

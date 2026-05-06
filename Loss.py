@@ -2,6 +2,37 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smooth Loss
+    def __init__(self):
+        super(Edge_Aware_Smooth_Loss, self).__init__()
+
+    def forward(self, disp, img):
+        """
+        disp: 네트워크가 예측한 시차 (Disparity) [B, 1, H, W]
+        img: 원본 입력 이미지 [B, 3, H, W]
+        """
+        mean_disp = disp.mean(dim=(1, 2, 3), keepdim=True)
+        disp = disp / (mean_disp + 1e-7)
+
+        # 깊이(시차)의 변화량(Gradient) 계산
+        disp_dx = torch.abs(disp[:, :, :, :-1] - disp[:, :, :, 1:])
+        disp_dy = torch.abs(disp[:, :, :-1, :] - disp[:, :, 1:, :])
+
+        # 원본 이미지의 색상 변화량(Gradient) 계산
+        img_dx = torch.abs(img[:, :, :, :-1] - img[:, :, :, 1:]).mean(1, keepdim=True)
+        img_dy = torch.abs(img[:, :, :-1, :] - img[:, :, 1:, :]).mean(1, keepdim=True)
+
+        # 이미지 색상이 변하면 깊이 평활화를 꺼버림 (exp(-색상변화))
+        # 색상 변화가 클수록 가중치가 0에 가까워져서 Smooth Loss가 무시됨
+        weight_x = torch.exp(-img_dx * 10.0)
+        weight_y = torch.exp(-img_dy * 10.0)
+
+        # 최종 Loss 계산
+        smoothness_x = disp_dx * weight_x
+        smoothness_y = disp_dy * weight_y
+
+        return smoothness_x.mean() + smoothness_y.mean()
+
 class SSIM(nn.Module): # 두 이미지가 얼마나 비슷한가
     def __init__(self, window_size = 3, C1 = 0.01 ** 2, C2 = 0.03 ** 2):
         super(SSIM, self).__init__()
@@ -110,8 +141,8 @@ class Minimum_Reprojection_Loss(nn.Module):
         mask = torch.clamp(mask, min=0.1) * bg_mask
         mask = mask * valid_mask
 
-        weight_loss = projected_pe * mask * C # [B, 1, H, W]
-        reg_loss = -0.01 * torch.log(C + 1e-7) * mask
+        weight_loss = (projected_pe / (C + 1e-7)) * mask # [B, 1, H, W]
+        reg_loss = 0.01 * torch.log(C + 1e-7) * mask
         
         return (weight_loss + reg_loss).sum() / (mask.sum() + 1e-8)
     

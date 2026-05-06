@@ -13,18 +13,29 @@ class ImageDataset(Dataset):
             transforms.Resize((224, 224)), # 혹시 모르니 리사이즈 추가
             transforms.ToTensor()
         ])
+
+        self.images = []
+        for file_name in self.img_files:
+            src_path = os.path.join(self.img_dir, file_name)
+            img_tensor = self.transform(Image.open(src_path).convert('RGB'))
+            self.images.append(img_tensor)
         
     def __len__(self):
-        return len(self.img_files) - self.frame_interval
+        return 1
+        # return len(self.img_files) - self.frame_interval
     
     def __getitem__(self, idx):
-        src1_path = os.path.join(self.img_dir, self.img_files[idx])
-        src2_path = os.path.join(self.img_dir, self.img_files[idx + self.frame_interval])
-
-        current_image = self.transform(Image.open(src1_path).convert('RGB'))
-        next_image = self.transform(Image.open(src2_path).convert('RGB'))
-
         return {
-            'current_image' : current_image,
-            'next_image' : next_image
+            'current_image' : self.images[30],
+            'next_image' : self.images[30 + self.frame_interval]
         }
+        # src1_path = os.path.join(self.img_dir, self.img_files[idx])
+        # src2_path = os.path.join(self.img_dir, self.img_files[idx + self.frame_interval])
+
+        # current_image = self.transform(Image.open(src1_path).convert('RGB'))
+        # next_image = self.transform(Image.open(src2_path).convert('RGB'))
+
+        # return {
+        #     'current_image' : current_image,
+        #     'next_image' : next_image
+        # }

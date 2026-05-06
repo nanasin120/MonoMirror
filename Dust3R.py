@@ -62,17 +62,22 @@ class Head(nn.Module):
         #final_G = all_G[-1]
         out = self.MLP(all_G)
 
-        disp_raw = torch.sigmoid(out[..., 0:1])
+        disp_raw = torch.sigmoid(out[..., 0:1]) # 0 ~ 1
         min_disp = 0.01 # 100
         max_disp = 10.0 # 0.1
-        scaled_disp = min_disp + (max_disp - min_disp) * disp_raw
         
-        Z_coord_safe = 1.0 / scaled_disp
+        # disp_raw가 0이면 0.01, 1이면 10.0
+        # 0.1 ~ 10.0
+        scaled_disp = min_disp + (max_disp - min_disp) * disp_raw 
+        
+        # disp_raw가 0이면 1/0.01 = 100, 1이면 1/10 = 0.1
+        # 0.1 ~ 100.0
+        Z_coord_safe = 1.0 / scaled_disp 
 
         C = out[..., 1:2]
         C = F.softplus(C) + 1e-6
 
-        return Z_coord_safe, C
+        return Z_coord_safe, scaled_disp, C
     
 class ProjectionHead(nn.Module):
     def __init__(self, d_model=768):
@@ -212,16 +217,10 @@ class Dust3R(nn.Module):
         K, E = self.projection_head(F1, F2)
         E_INV = torch.inverse(E)
 
-        # all_G1 = []
-        # all_G2 = []
-
         G1, G2 = F1, F2
 
         for decoder in self.decoders:
             G1, G2 = decoder(G1, G2, E), decoder(G2, G1, E_INV)
-
-            # all_G1.append(G1)
-            # all_G2.append(G2)
 
         G1_224x224 = self.upsampler(G1)
         G2_224x224 = self.upsampler(G2)
@@ -230,9 +229,8 @@ class Dust3R(nn.Module):
         G1_flat = G1_224x224.view(B, C, -1).transpose(1, 2) # [B, 50176, 64]
         G2_flat = G2_224x224.view(B, C, -1).transpose(1, 2) # [B, 50176, 64]
 
-        # z는 0.3 ~ 
-        Z1, C1 = self.Head(G1_flat)
-        Z2, C2 = self.Head(G2_flat)
+        Z1, D1, C1 = self.Head(G1_flat)
+        Z2, D2, C2 = self.Head(G2_flat)
 
         fx = K[:, 0, 0].view(B, 1, 1)
         fy = K[:, 1, 1].view(B, 1, 1)
@@ -255,9 +253,9 @@ class Dust3R(nn.Module):
         MATRIX = torch.bmm(K44, E)[:, :3, :]
         MATRIX_INV = torch.bmm(K44, E_INV)[:, :3, :]
 
-        # print(f"True fx: {K[0, 0, 0].item():.2f}, True fy: {K[0, 1, 1].item():.2f}")
-        # print(f"K : {K}")
-        # print(f"E : {E}")
-        # print(f"Z min: {Z1.min().item():.4f}, Z max: {Z1.max().item():.4f}, 갭: {(Z1.max() - Z1.min()).item():.4f}")
+        print(f"True fx: {K[0, 0, 0].item():.2f}, True fy: {K[0, 1, 1].item():.2f}")
+        print(f"K : {K}")
+        print(f"E : {E}")
+        print(f"Z min: {Z1.min().item():.4f}, Z max: {Z1.max().item():.4f}, 갭: {(Z1.max() - Z1.min()).item():.4f}")
 
-        return XYZ1, C1, XYZ2, C2, MATRIX, MATRIX_INV
+        return XYZ1, C1, D1, XYZ2, C2, D2, MATRIX, MATRIX_INV

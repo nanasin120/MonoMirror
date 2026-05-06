@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from Dust3R import Dust3R
 from ImageDataset import ImageDataset
 from defs import get_projected_image, load_croco_weights_to_dust3r, save_fixed_sample
-from Loss import Minimum_Reprojection_Loss, Smooth_Loss
+from Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss
 import os
 import time
 
@@ -16,10 +16,10 @@ img_save_path = r'./image_save'
 if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
 BATCH = 4
-EPOCH = 10
+EPOCH = 500
 LEARNING_RATE = 1e-5
-IMAGE_SAVE_INTERVEL = 1
-WEIGHT_SAVE_INTERVEL = 10
+IMAGE_SAVE_INTERVEL = 25
+WEIGHT_SAVE_INTERVEL = 501
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 img_dir = r'cup'
@@ -29,7 +29,6 @@ dataloader = DataLoader(
     dataset=full_dataset,
     batch_size=BATCH,
     shuffle=True,
-    num_workers=4,
     pin_memory=True
 )
 
@@ -38,6 +37,7 @@ load_croco_weights_to_dust3r(model, r'croco_epoch_150.pth')
 
 criterion_reprojection = Minimum_Reprojection_Loss().to(DEVICE)
 criterion_smooth = Smooth_Loss().to(DEVICE)
+criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
 
 optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
 scheduler = CosineAnnealingLR(optimizer, T_max=EPOCH, eta_min=1e-6)
@@ -58,12 +58,12 @@ def train():
             current_image = batch['current_image'].to(DEVICE)
             next_image = batch['next_image'].to(DEVICE)
 
-            XYZ1, C1, XYZ2, C2, MATRIX, MATRIX_INV = model(current_image, next_image)
+            XYZ1, C1, D1, XYZ2, C2, D2, MATRIX, MATRIX_INV = model(current_image, next_image)
 
             B = XYZ1.shape[0]
 
-            Z1 = XYZ1[..., 2:3].permute(0, 2, 1).reshape(B, 1, 224, 224)
-            Z2 = XYZ2[..., 2:3].permute(0, 2, 1).reshape(B, 1, 224, 224)
+            D1 = D1.permute(0, 2, 1).reshape(B, 1, 224, 224)
+            D2 = D2.permute(0, 2, 1).reshape(B, 1, 224, 224)
 
             projected_img1, valid_mask1 = get_projected_image(current_image, next_image, XYZ1, MATRIX)
             projected_img2, valid_mask2 = get_projected_image(next_image, current_image, XYZ2, MATRIX_INV)
@@ -71,8 +71,11 @@ def train():
             loss_reproj_1 = criterion_reprojection(current_image, next_image, projected_img1, C1, valid_mask1)
             loss_reproj_2 = criterion_reprojection(next_image, current_image, projected_img2, C2, valid_mask2)
 
-            loss_smoothloss_1 = criterion_smooth(Z1, current_image)
-            loss_smoothloss_2 = criterion_smooth(Z2, next_image)
+            # loss_smoothloss_1 = criterion_smooth(Z1, current_image)
+            # loss_smoothloss_2 = criterion_smooth(Z2, next_image)
+
+            loss_smoothloss_1 = criterion_edge_smooth(D1, current_image)
+            loss_smoothloss_2 = criterion_edge_smooth(D2, next_image)
 
             loss_reproj = (loss_reproj_1 + loss_reproj_2) * 0.5
             loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2) * 0.5
