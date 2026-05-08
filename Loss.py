@@ -124,7 +124,7 @@ class Minimum_Reprojection_Loss(nn.Module):
         super(Minimum_Reprojection_Loss, self).__init__()
         self.pe = photometric_error()
 
-    def forward(self, target_image, source_image, projected_image, C, valid_mask):
+    def forward(self, target_image, source_image, projected_image, valid_mask):
         # target_image : [B, 3, H, W]
         # projected_image : [B, 3, H, W]
 
@@ -132,19 +132,17 @@ class Minimum_Reprojection_Loss(nn.Module):
 
         bg_mask = (target_image.sum(dim=1, keepdim=True) > 0).float()
 
-        C = C.transpose(1, 2).reshape(B, 1, 224, 224)
-
         projected_pe = self.pe(target_image, projected_image) # [B, 1, H, W]
         source_pe = self.pe(target_image, source_image) # [B, 1, H, W]
 
-        mask = (projected_pe < source_pe).float() # [B, 1, H, W]
-        mask = torch.clamp(mask, min=0.1) * bg_mask
-        mask = mask * valid_mask
+        # mask = (projected_pe < source_pe).float() # [B, 1, H, W]
+        # mask = mask * bg_mask * valid_mask
 
-        weight_loss = (projected_pe / (C + 1e-7)) * mask # [B, 1, H, W]
-        reg_loss = 0.01 * torch.log(C + 1e-7) * mask
+        min_pe = torch.minimum(projected_pe, source_pe)
+
+        weight_loss = min_pe * valid_mask * bg_mask # [B, 1, H, W]
         
-        return (weight_loss + reg_loss).sum() / (mask.sum() + 1e-8)
+        return weight_loss.sum() / ((valid_mask * bg_mask).sum() + 1e-8)
     
 class Smooth_Loss(nn.Module):
     def __init__(self):

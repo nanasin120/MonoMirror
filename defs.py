@@ -13,7 +13,7 @@ def save_fixed_sample(model, dataset, epoch, save_path, device):
         next_img = sample['next_image'].unsqueeze(0).to(device) # [1, 3, 224, 224]
 
         # 모델 추론
-        XYZ1, C1, D1, XYZ2, C2, D2, MATRIX, MATRIX_INV = model(curr_img, next_img)
+        XYZ1, D1, XYZ2, D2, MATRIX, MATRIX_INV = model(curr_img, next_img)
 
         # 재투영 이미지 생성
         projected_img, _ = get_projected_image(curr_img, next_img, XYZ1, MATRIX)

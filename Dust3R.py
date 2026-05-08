@@ -46,23 +46,22 @@ class Decoder(nn.Module):
         return after_ffn
     
 class Head(nn.Module):
-    def __init__(self, d_model=64):
+    def __init__(self, in_channel=32):
         super(Head, self).__init__()
 
         self.MLP = nn.Sequential(
-            nn.Linear(d_model, d_model),
+            nn.Conv2d(in_channels=in_channel, out_channels=in_channel, kernel_size=3, padding=1),
             nn.GELU(),
-            nn.Linear(d_model, 2)
+            nn.Conv2d(in_channels=in_channel, out_channels=1, kernel_size=1),
         )
 
         nn.init.normal_(self.MLP[-1].weight, std=1e-4)
         nn.init.zeros_(self.MLP[-1].bias)
 
     def forward(self, all_G):
-        #final_G = all_G[-1]
-        out = self.MLP(all_G)
+        out = self.MLP(all_G) # [B, 1, 224, 224]
 
-        disp_raw = torch.sigmoid(out[..., 0:1]) # 0 ~ 1
+        disp_raw = torch.sigmoid(out) # 0 ~ 1
         min_disp = 0.01 # 100
         max_disp = 10.0 # 0.1
         
@@ -74,10 +73,7 @@ class Head(nn.Module):
         # 0.1 ~ 100.0
         Z_coord_safe = 1.0 / scaled_disp 
 
-        C = out[..., 1:2]
-        C = F.softplus(C) + 1e-6
-
-        return Z_coord_safe, scaled_disp, C
+        return Z_coord_safe, scaled_disp
     
 class ProjectionHead(nn.Module):
     def __init__(self, d_model=768):
@@ -131,53 +127,100 @@ class ProjectionHead(nn.Module):
         return K, E
     
 class FeatureUpsampler(nn.Module):
-    def __init__(self, in_channels=768, out_channels=64):
-        # in_channels: ViT(CroCo)의 차원 수 (보통 768 또는 1024)
-        # out_channels: Head에 넘겨줄 차원 수 (가볍게 64 정도로 줄입니다)
-        super().__init__()
+    def __init__(self, in_channels=768, out_channels=32): # 768 -> 256 -> 128 -> 64 -> 32
+        super(FeatureUpsampler, self).__init__()
         
-        # 1단계: 14x14 -> 28x28
         self.up1 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
             nn.Conv2d(in_channels, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.GELU()
         )
-        # 2단계: 28x28 -> 56x56
+        self.skip1 = nn.Sequential(
+            nn.Conv2d(768, 256, kernel_size=1),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+        )
+        self.fuse1 = nn.Sequential(
+            nn.Conv2d(512, 256, kernel_size=3, padding=1),
+            nn.GELU()
+        )
+        
         self.up2 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
             nn.Conv2d(256, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.GELU()
         )
-        # 3단계: 56x56 -> 112x112
-        self.up3 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-            nn.Conv2d(128, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
-            nn.GELU()
+        self.skip2 = nn.Sequential(
+            nn.Conv2d(768, 128, kernel_size=1),
+            nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False),
         )
-        # 4단계: 112x112 -> 224x224
-        self.up4 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+        self.fuse2 = nn.Sequential(
+            nn.Conv2d(256, 128, kernel_size=3, padding=1),
             nn.GELU()
         )
 
-    def forward(self, x):
-        # 입력 x의 형태: [B, 196, 768]
-        B, N, C = x.shape
-        H = W = int(N ** 0.5) # 14
+        self.up3 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.GELU()
+        )
+        self.skip3 = nn.Sequential(
+            nn.Conv2d(768, 64, kernel_size=1),
+            nn.Upsample(scale_factor=8, mode='bilinear', align_corners=False),
+        )
+        self.fuse3 = nn.Sequential(
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.GELU()
+        )
+
+        self.up4 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Conv2d(64, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.GELU()
+        )
+        self.skip4 = nn.Sequential(
+            nn.Conv2d(768, out_channels, kernel_size=1),
+            nn.Upsample(scale_factor=16, mode='bilinear', align_corners=False),
+        )
+        self.fuse4 = nn.Sequential(
+            nn.Conv2d(out_channels * 2, out_channels, kernel_size=3, padding=1),
+            nn.GELU()
+        )
+
+    def forward(self, G, F):
+        # G는 디코더의 추출물 [B, 196, 768]
+        # F는 인코더의 추출물 [4, B, 196, 768] 2, 5, 8, 11
+        B = G.shape[0]
         
-        # 1. 시퀀스 형태를 이미지 형태 [B, 768, 14, 14]로 변환
-        x = x.transpose(1, 2).view(B, C, H, W)
+        x = G.transpose(1, 2).view(B, 768, 14, 14)
+        f1 = F[3].transpose(1, 2).view(B, 768, 14, 14)
+        f2 = F[2].transpose(1, 2).view(B, 768, 14, 14)
+        f3 = F[1].transpose(1, 2).view(B, 768, 14, 14)
+        f4 = F[0].transpose(1, 2).view(B, 768, 14, 14)
         
-        # 2. 점진적 확대
-        x = self.up1(x) # -> [B, 256, 28, 28]
-        x = self.up2(x) # -> [B, 128, 56, 56]
-        x = self.up3(x) # -> [B, 64, 112, 112]
-        x = self.up4(x) # -> [B, 64, 224, 224]
-        
+        x = self.up1(x) # [B, 256, 28, 28]
+        s1 = self.skip1(f1) # [B, 256, 28, 28]
+        x = torch.cat([x, s1], dim=1) # Concat: [B, 512, 28, 28]
+        x = self.fuse1(x) # Fuse: [B, 256, 28, 28]
+
+        x = self.up2(x) # [B, 128, 56, 56]
+        s2 = self.skip2(f2) # [B, 128, 56, 56]
+        x = torch.cat([x, s2], dim=1) # Concat: [B, 256, 56, 56]
+        x = self.fuse2(x) # Fuse: [B, 128, 56, 56]
+
+        x = self.up3(x) # [B, 64, 112, 112]
+        s3 = self.skip3(f3) # [B, 64, 112, 112]
+        x = torch.cat([x, s3], dim=1) # Concat: [B, 128, 112, 112]
+        x = self.fuse3(x) # Fuse: [B, 64, 112, 112]
+
+        x = self.up4(x) # [B, 32, 224, 224]
+        s4 = self.skip4(f4) # [B, 32, 224, 224]
+        x = torch.cat([x, s4], dim=1) # Concat: [B, 64, 224, 224]
+        x = self.fuse4(x) # Fuse: [B, 32, 224, 224]
+
         return x
 
 class Dust3R(nn.Module):
@@ -212,25 +255,26 @@ class Dust3R(nn.Module):
         # image1 : [B, 3, H, W] [B, 3, 224, 224]
         # image2 : [B, 3, H, W] [B, 3, 224, 224]
 
-        F1, F2 = self.CroCo_Encoder(image1, image2) # [B, 196, 768]
+        F1, F2 = self.CroCo_Encoder(image1, image2) # [4, B, 196, 768]
 
-        K, E = self.projection_head(F1, F2)
+        K, E = self.projection_head(F1[-1], F2[-1])
         E_INV = torch.inverse(E)
 
-        G1, G2 = F1, F2
+        G1, G2 = F1[-1], F2[-1]
 
         for decoder in self.decoders:
-            G1, G2 = decoder(G1, G2, E), decoder(G2, G1, E_INV)
+            G1, G2 = decoder(G1, G2, E), decoder(G2, G1, E_INV) # [B, 196, 768]
 
-        G1_224x224 = self.upsampler(G1)
-        G2_224x224 = self.upsampler(G2)
+        G1_224x224 = self.upsampler(G1, F1) # [B, 32, 224, 224]
+        G2_224x224 = self.upsampler(G2, F2) # [B, 32, 224, 224]
 
         B, C, H, W = G1_224x224.shape
-        G1_flat = G1_224x224.view(B, C, -1).transpose(1, 2) # [B, 50176, 64]
-        G2_flat = G2_224x224.view(B, C, -1).transpose(1, 2) # [B, 50176, 64]
 
-        Z1, D1, C1 = self.Head(G1_flat)
-        Z2, D2, C2 = self.Head(G2_flat)
+        Z1, D1 = self.Head(G1_224x224) # [B, 1, 224, 224]
+        Z2, D2 = self.Head(G2_224x224) # [B, 1, 224, 224]
+
+        Z1 = Z1.view(B, -1, 1)
+        Z2 = Z2.view(B, -1, 1)
 
         fx = K[:, 0, 0].view(B, 1, 1)
         fy = K[:, 1, 1].view(B, 1, 1)
@@ -258,4 +302,4 @@ class Dust3R(nn.Module):
         print(f"E : {E}")
         print(f"Z min: {Z1.min().item():.4f}, Z max: {Z1.max().item():.4f}, 갭: {(Z1.max() - Z1.min()).item():.4f}")
 
-        return XYZ1, C1, D1, XYZ2, C2, D2, MATRIX, MATRIX_INV
+        return XYZ1, D1, XYZ2, D2, MATRIX, MATRIX_INV

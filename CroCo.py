@@ -57,11 +57,20 @@ class CroCo(nn.Module):
 
         # --- Encoder Section --- 
 
+        features_1 = []
+        features_2 = []
+        extract_layers = [2, 5, 8, 11]
+
         p1 = self.positionalEncoding2D(p1)
         p2 = self.positionalEncoding2D(p2)
         
-        for encoder in self.encoders:
+        for i, encoder in enumerate(self.encoders):
             p1 = encoder(p1)
             p2 = encoder(p2)
 
-        return p1, p2
+            if i in extract_layers:
+                features_1.append(p1)
+                features_2.append(p2)
+
+
+        return features_1, features_2

@@ -16,10 +16,10 @@ img_save_path = r'./image_save'
 if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
 BATCH = 4
-EPOCH = 500
+EPOCH = 10000
 LEARNING_RATE = 1e-5
-IMAGE_SAVE_INTERVEL = 25
-WEIGHT_SAVE_INTERVEL = 501
+IMAGE_SAVE_INTERVEL = 100
+WEIGHT_SAVE_INTERVEL = 1000
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 img_dir = r'cup'
@@ -58,18 +58,13 @@ def train():
             current_image = batch['current_image'].to(DEVICE)
             next_image = batch['next_image'].to(DEVICE)
 
-            XYZ1, C1, D1, XYZ2, C2, D2, MATRIX, MATRIX_INV = model(current_image, next_image)
-
-            B = XYZ1.shape[0]
-
-            D1 = D1.permute(0, 2, 1).reshape(B, 1, 224, 224)
-            D2 = D2.permute(0, 2, 1).reshape(B, 1, 224, 224)
+            XYZ1, D1, XYZ2, D2, MATRIX, MATRIX_INV = model(current_image, next_image)
 
             projected_img1, valid_mask1 = get_projected_image(current_image, next_image, XYZ1, MATRIX)
             projected_img2, valid_mask2 = get_projected_image(next_image, current_image, XYZ2, MATRIX_INV)
 
-            loss_reproj_1 = criterion_reprojection(current_image, next_image, projected_img1, C1, valid_mask1)
-            loss_reproj_2 = criterion_reprojection(next_image, current_image, projected_img2, C2, valid_mask2)
+            loss_reproj_1 = criterion_reprojection(current_image, next_image, projected_img1, valid_mask1)
+            loss_reproj_2 = criterion_reprojection(next_image, current_image, projected_img2, valid_mask2)
 
             # loss_smoothloss_1 = criterion_smooth(Z1, current_image)
             # loss_smoothloss_2 = criterion_smooth(Z2, next_image)
