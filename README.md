@@ -10,3 +10,5 @@ smoothloss is 0.001, disp min is 9.9769 and max is 10.0000, i have to change smo
 smoothloss is 0.005, epoch 40, disp broken. rollback to 0.01
 <img width="672" height="224" alt="image" src="https://github.com/user-attachments/assets/f01d5200-7139-4f73-8a89-f29e7a99baff" />
 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) add
+100 epoch. not bad. but too slow. next, change edge_aware_smooth_loss sensivity 10.0 to 50.0
+<img width="672" height="224" alt="image" src="https://github.com/user-attachments/assets/52735ed2-e4a6-463b-9f32-1e6f0b587e3b" />
