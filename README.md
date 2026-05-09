@@ -12,3 +12,5 @@ smoothloss is 0.005, epoch 40, disp broken. rollback to 0.01
 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) add
 100 epoch. not bad. but too slow. next, change edge_aware_smooth_loss sensivity 10.0 to 50.0
 <img width="672" height="224" alt="image" src="https://github.com/user-attachments/assets/52735ed2-e4a6-463b-9f32-1e6f0b587e3b" />
+add pointmap_loss. but blowed up
+<img width="672" height="224" alt="image" src="https://github.com/user-attachments/assets/37b5d675-a98d-4c9a-bb94-44f17b3d32e3" />
