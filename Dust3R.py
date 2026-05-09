@@ -251,7 +251,7 @@ class Dust3R(nn.Module):
         self.register_buffer('u', u_flat)
         self.register_buffer('v', v_flat)
 
-    def forward(self, image1, image2):
+    def forward(self, image1, image2, sfs=False):
         # image1 : [B, 3, H, W] [B, 3, 224, 224]
         # image2 : [B, 3, H, W] [B, 3, 224, 224]
 
@@ -297,9 +297,12 @@ class Dust3R(nn.Module):
         MATRIX = torch.bmm(K44, E)[:, :3, :]
         MATRIX_INV = torch.bmm(K44, E_INV)[:, :3, :]
 
-        print(f"True fx: {K[0, 0, 0].item():.2f}, True fy: {K[0, 1, 1].item():.2f}")
-        print(f"K : {K}")
-        print(f"E : {E}")
-        print(f"Z min: {Z1.min().item():.4f}, Z max: {Z1.max().item():.4f}, 갭: {(Z1.max() - Z1.min()).item():.4f}")
+        if sfs:
+            print(f"--- [Fixed Sample Monitoring] ---")
+            print(f"True fx: {K[0, 0, 0].item():.2f}, True fy: {K[0, 1, 1].item():.2f}")
+            print(f"K : \n{K}")
+            print(f"E : \n{E}")
+            print(f"Z min: {Z1.min().item():.4f}, Z max: {Z1.max().item():.4f}, 갭: {(Z1.max() - Z1.min()).item():.4f}")
+            print(f"---------------------------------")
 
         return XYZ1, D1, XYZ2, D2, MATRIX, MATRIX_INV

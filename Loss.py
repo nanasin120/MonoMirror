@@ -2,6 +2,31 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class pointmap_Loss(nn.Module):
+    def __init__(self):
+        super(pointmap_Loss, self).__init__()
+
+    def forward(self, p1, p2, valid_mask=None):
+        # p1, p2 [B, H * W, 3]
+        B = p1.shape[0]
+
+        mean_z1 = p1[:, :, 2:3].mean(dim=1, keepdim=True) + 1e-7 
+        mean_z2 = p2[:, :, 2:3].mean(dim=1, keepdim=True) + 1e-7 
+
+        p1_norm = p1 / mean_z1
+        p2_norm = p2 / mean_z2
+
+        diff = torch.abs(p1_norm - p2_norm)
+
+        if valid_mask is not None:
+            valid_mask = valid_mask.view(B, -1, 1)
+            diff = diff * valid_mask
+            loss = diff.sum() / (valid_mask.sum() * 3 + 1e-7)
+        else:
+            loss = diff.mean()
+
+        return loss
+
 class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smooth Loss
     def __init__(self):
         super(Edge_Aware_Smooth_Loss, self).__init__()
@@ -24,8 +49,8 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
 
         # 이미지 색상이 변하면 깊이 평활화를 꺼버림 (exp(-색상변화))
         # 색상 변화가 클수록 가중치가 0에 가까워져서 Smooth Loss가 무시됨
-        weight_x = torch.exp(-img_dx * 10.0)
-        weight_y = torch.exp(-img_dy * 10.0)
+        weight_x = torch.exp(-img_dx * 100.0)
+        weight_y = torch.exp(-img_dy * 100.0)
 
         # 최종 Loss 계산
         smoothness_x = disp_dx * weight_x

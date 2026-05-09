@@ -21,21 +21,21 @@ class ImageDataset(Dataset):
             self.images.append(img_tensor)
         
     def __len__(self):
-        return 1
-        # return len(self.img_files) - self.frame_interval
+        # return 1
+        return len(self.img_files) - self.frame_interval
     
     def __getitem__(self, idx):
-        return {
-            'current_image' : self.images[30],
-            'next_image' : self.images[30 + self.frame_interval]
-        }
-        # src1_path = os.path.join(self.img_dir, self.img_files[idx])
-        # src2_path = os.path.join(self.img_dir, self.img_files[idx + self.frame_interval])
-
-        # current_image = self.transform(Image.open(src1_path).convert('RGB'))
-        # next_image = self.transform(Image.open(src2_path).convert('RGB'))
-
         # return {
-        #     'current_image' : current_image,
-        #     'next_image' : next_image
+        #     'current_image' : self.images[30],
+        #     'next_image' : self.images[30 + self.frame_interval]
         # }
+        src1_path = os.path.join(self.img_dir, self.img_files[idx])
+        src2_path = os.path.join(self.img_dir, self.img_files[idx + self.frame_interval])
+
+        current_image = self.transform(Image.open(src1_path).convert('RGB'))
+        next_image = self.transform(Image.open(src2_path).convert('RGB'))
+
+        return {
+            'current_image' : current_image,
+            'next_image' : next_image
+        }

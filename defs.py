@@ -13,7 +13,7 @@ def save_fixed_sample(model, dataset, epoch, save_path, device):
         next_img = sample['next_image'].unsqueeze(0).to(device) # [1, 3, 224, 224]
 
         # 모델 추론
-        XYZ1, D1, XYZ2, D2, MATRIX, MATRIX_INV = model(curr_img, next_img)
+        XYZ1, D1, XYZ2, D2, MATRIX, MATRIX_INV = model(curr_img, next_img, True)
 
         # 재투영 이미지 생성
         projected_img, _ = get_projected_image(curr_img, next_img, XYZ1, MATRIX)
@@ -67,13 +67,19 @@ def axis_angle_to_matrix(rot_vec):
     R = I + sin_a * K + (1 - cos_a) * torch.bmm(K, K)
     return R
 
-def get_projected_image(img1, img2, X, MATRIX):
-    B, _, H, W = img1.shape
+def get_projected_points(X, MATRIX):
+    B = X.shape[0]
     X_dense = X
     ones = torch.ones((B, X_dense.shape[1], 1), device=X.device)
     X_homo = torch.cat([X_dense, ones], dim=-1)
 
     projected_points = torch.matmul(X_homo, MATRIX.transpose(1, 2)) # [B, H * W, 4]
+    return projected_points
+
+
+def get_projected_image(img1, img2, X, MATRIX):
+    B, _, H, W = img1.shape
+    projected_points = get_projected_points(X, MATRIX)
 
     raw_z = projected_points[..., 2]
     z = raw_z.clamp(min=1e-3)
@@ -107,7 +113,7 @@ def get_projected_image(img1, img2, X, MATRIX):
 
     return projected_img, valid_mask
 
-def visualize_points(X, image, z_scale=10.0):
+def visualize_points(X, image, z_scale=1.0):
     X = X.detach().cpu().numpy()
     X[:, 2] = X[:, 2] * z_scale
     X[:, 1] = X[:, 1] * -1.0

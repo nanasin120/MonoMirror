@@ -5,8 +5,8 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 from Dust3R import Dust3R
 from ImageDataset import ImageDataset
-from defs import get_projected_image, load_croco_weights_to_dust3r, save_fixed_sample
-from Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss
+from defs import get_projected_image, load_croco_weights_to_dust3r, save_fixed_sample, get_projected_points
+from Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss, pointmap_Loss
 import os
 import time
 
@@ -16,10 +16,12 @@ img_save_path = r'./image_save'
 if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
 BATCH = 4
-EPOCH = 10000
+START_EPOCH = 0
+END_EPOCH = 20
+ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
 LEARNING_RATE = 1e-5
-IMAGE_SAVE_INTERVEL = 100
-WEIGHT_SAVE_INTERVEL = 1000
+IMAGE_SAVE_INTERVEL = 2
+WEIGHT_SAVE_INTERVEL = 5
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 img_dir = r'cup'
@@ -33,24 +35,27 @@ dataloader = DataLoader(
 )
 
 model = Dust3R().to(DEVICE)
-load_croco_weights_to_dust3r(model, r'croco_epoch_150.pth')
+model.load_state_dict(torch.load(r'_model_save\model_epoch_100.pth', weights_only=True))
+# load_croco_weights_to_dust3r(model, r'croco_epoch_150.pth')
 
 criterion_reprojection = Minimum_Reprojection_Loss().to(DEVICE)
 criterion_smooth = Smooth_Loss().to(DEVICE)
 criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
+criterion_pointmap_loss = pointmap_Loss().to(DEVICE)
 
 optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
-scheduler = CosineAnnealingLR(optimizer, T_max=EPOCH, eta_min=1e-6)
+# scheduler = CosineAnnealingLR(optimizer, T_max=ADDITIONAL_EPOCH, eta_min=1e-6)
 
 def train():
     print('TRAIN START')
     best_avg_loss = float('inf')
 
-    for epoch in range(0, EPOCH + 1):
+    for epoch in range(START_EPOCH, END_EPOCH + 1):
         model.train()
         train_loss = 0.0
         train_reproj_loss = 0.0
         train_smooth_loss = 0.0
+        train_point_loss = 0.0
         epoch_start_time = time.time()
 
         batch_start_time = time.time()
@@ -66,36 +71,40 @@ def train():
             loss_reproj_1 = criterion_reprojection(current_image, next_image, projected_img1, valid_mask1)
             loss_reproj_2 = criterion_reprojection(next_image, current_image, projected_img2, valid_mask2)
 
-            # loss_smoothloss_1 = criterion_smooth(Z1, current_image)
-            # loss_smoothloss_2 = criterion_smooth(Z2, next_image)
+            loss_pointmap_1 = criterion_pointmap_loss(XYZ1, get_projected_points(XYZ2, MATRIX_INV.detach())[..., :3], valid_mask1)
+            loss_pointmap_2 = criterion_pointmap_loss(XYZ2, get_projected_points(XYZ1, MATRIX.detach())[..., :3], valid_mask2)
 
             loss_smoothloss_1 = criterion_edge_smooth(D1, current_image)
             loss_smoothloss_2 = criterion_edge_smooth(D2, next_image)
 
             loss_reproj = (loss_reproj_1 + loss_reproj_2) * 0.5
             loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2) * 0.5
+            loss_pointmap = (loss_pointmap_1 + loss_pointmap_2) * 0.5
 
-            total_loss = loss_reproj + (loss_smoothloss * 0.01)
+            total_loss = (loss_reproj * 0.5) + (loss_pointmap * 0.001) + (loss_smoothloss * 0.01)
 
             optimizer.zero_grad()
             total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             if batch_idx % 10 == 0:
                 batch_end_time = time.time()
-                print(f'Epoch [{epoch}/{EPOCH}] Batch [{batch_idx}/{len(dataloader)}] Loss_total : {total_loss.item():.4f} Time : {batch_end_time-batch_start_time:.4f}')
+                print(f'Epoch [{epoch}/{END_EPOCH}] Batch [{batch_idx}/{len(dataloader)}] Loss_total : {total_loss.item():.4f} Time : {batch_end_time-batch_start_time:.4f}')
                 batch_start_time = time.time()
 
             train_loss += total_loss.item()
-            train_reproj_loss += loss_reproj.item()
+            train_reproj_loss += loss_reproj.item() * 0.5
             train_smooth_loss += loss_smoothloss.item() * 0.01
+            train_point_loss += loss_pointmap.item() * 0.001
 
         avg_train_loss = train_loss / len(dataloader)
         avg_train_reproj_loss = train_reproj_loss / len(dataloader)
         avg_train_smooth_loss = train_smooth_loss / len(dataloader)
+        avg_train_point_loss = train_point_loss / len(dataloader)
 
         epoch_end_time = time.time()
-        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_train_reproj_loss:.4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Time : {epoch_end_time-epoch_start_time:.4f}')
+        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_train_reproj_loss:.4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Pointmap Loss : {avg_train_point_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
 
         if epoch % WEIGHT_SAVE_INTERVEL == 0:
             save_path = os.path.join(model_save_path, f'model_epoch_{epoch}.pth')
@@ -114,7 +123,7 @@ def train():
 
             print(f'New Best Model Saved! Loss : {best_avg_loss:.4f}') 
 
-        scheduler.step()
+        # scheduler.step()
 
 if __name__ == "__main__":
     train()

@@ -15,12 +15,12 @@ criterion_smooth = Smooth_Loss().to(device)
 
 # load_croco_weights_to_dust3r(model, r'croco_epoch_150.pth')
 
-model.load_state_dict(torch.load(r"model_save\model_epoch_10.pth", weights_only=True))
+model.load_state_dict(torch.load(r"model_save\model_epoch_30.pth", weights_only=True))
 
 current_image = full_dataset[0]['current_image'].unsqueeze(0).to(device)
 next_image = full_dataset[0]['next_image'].unsqueeze(0).to(device)
 
-XYZ1, C1, D1, XYZ2, C2, D2, MATRIX, MATRIX_INV = model(current_image, next_image)
+XYZ1, D1, XYZ2, D2, MATRIX, MATRIX_INV = model(current_image, next_image)
 
 # B = 1
 
