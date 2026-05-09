@@ -9,3 +9,4 @@ smoothloss is 0.001, disp min is 9.9769 and max is 10.0000, i have to change smo
 <img width="672" height="224" alt="image" src="https://github.com/user-attachments/assets/eaf43f09-b3cb-467d-a4bb-98fa51f25d69" />
 smoothloss is 0.005, epoch 40, disp broken. rollback to 0.01
 <img width="672" height="224" alt="image" src="https://github.com/user-attachments/assets/f01d5200-7139-4f73-8a89-f29e7a99baff" />
+torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) add
