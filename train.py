@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from Dust3R import Dust3R
 from ImageDataset import ImageDataset
 from defs import get_projected_image, load_croco_weights_to_dust3r, save_fixed_sample, get_projected_points
-from Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss, pointmap_Loss
+from Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss, pointmap_Loss, Disparity_Loss
 import os
 import time
 
@@ -42,6 +42,7 @@ criterion_reprojection = Minimum_Reprojection_Loss().to(DEVICE)
 criterion_smooth = Smooth_Loss().to(DEVICE)
 criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
 criterion_pointmap_loss = pointmap_Loss().to(DEVICE)
+criterion_disparity_loss = Disparity_Loss().to(DEVICE)
 
 optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
 # scheduler = CosineAnnealingLR(optimizer, T_max=ADDITIONAL_EPOCH, eta_min=1e-6)
@@ -56,6 +57,7 @@ def train():
         train_reproj_loss = 0.0
         train_smooth_loss = 0.0
         train_point_loss = 0.0
+        train_disparity_loss = 0.0
         epoch_start_time = time.time()
 
         batch_start_time = time.time()
@@ -71,17 +73,24 @@ def train():
             loss_reproj_1 = criterion_reprojection(current_image, next_image, projected_img1, valid_mask1)
             loss_reproj_2 = criterion_reprojection(next_image, current_image, projected_img2, valid_mask2)
 
-            loss_pointmap_1 = criterion_pointmap_loss(XYZ1, get_projected_points(XYZ2, MATRIX_INV.detach())[..., :3], valid_mask1)
-            loss_pointmap_2 = criterion_pointmap_loss(XYZ2, get_projected_points(XYZ1, MATRIX.detach())[..., :3], valid_mask2)
+            # loss_pointmap_1 = criterion_pointmap_loss(XYZ1, get_projected_points(XYZ2, MATRIX_INV.detach())[..., :3], valid_mask1)
+            # loss_pointmap_2 = criterion_pointmap_loss(XYZ2, get_projected_points(XYZ1, MATRIX.detach())[..., :3], valid_mask2)
+
+            D2_warped_1, _ = get_projected_image(current_image, D2, XYZ1, MATRIX)
+            D1_warped_2, _ = get_projected_image(next_image, D1, XYZ2, MATRIX_INV)
+
+            loss_disparity_1 = criterion_disparity_loss(D1, D2_warped_1, valid_mask1)
+            loss_disparity_2 = criterion_disparity_loss(D2, D1_warped_2, valid_mask2)
 
             loss_smoothloss_1 = criterion_edge_smooth(D1, current_image)
             loss_smoothloss_2 = criterion_edge_smooth(D2, next_image)
 
             loss_reproj = (loss_reproj_1 + loss_reproj_2) * 0.5
             loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2) * 0.5
-            loss_pointmap = (loss_pointmap_1 + loss_pointmap_2) * 0.5
+            # loss_pointmap = (loss_pointmap_1 + loss_pointmap_2) * 0.5
+            loss_disparity = (loss_disparity_1 + loss_disparity_2) * 0.5
 
-            total_loss = (loss_reproj * 0.5) + (loss_pointmap * 0.001) + (loss_smoothloss * 0.01)
+            total_loss = (loss_reproj * 0.5) + (loss_disparity * 0.005) + (loss_smoothloss * 0.01)
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -96,15 +105,18 @@ def train():
             train_loss += total_loss.item()
             train_reproj_loss += loss_reproj.item() * 0.5
             train_smooth_loss += loss_smoothloss.item() * 0.01
-            train_point_loss += loss_pointmap.item() * 0.001
+            # train_point_loss += loss_pointmap.item() * 0.001
+            train_disparity_loss += loss_disparity.item()
+
 
         avg_train_loss = train_loss / len(dataloader)
         avg_train_reproj_loss = train_reproj_loss / len(dataloader)
         avg_train_smooth_loss = train_smooth_loss / len(dataloader)
-        avg_train_point_loss = train_point_loss / len(dataloader)
+        # avg_train_point_loss = train_point_loss / len(dataloader)
+        avg_train_disparity_loss = train_disparity_loss / len(dataloader)
 
         epoch_end_time = time.time()
-        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_train_reproj_loss:.4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Pointmap Loss : {avg_train_point_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
+        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_train_reproj_loss:.4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Disparity Loss : {avg_train_disparity_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
 
         if epoch % WEIGHT_SAVE_INTERVEL == 0:
             save_path = os.path.join(model_save_path, f'model_epoch_{epoch}.pth')

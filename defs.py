@@ -86,19 +86,6 @@ def get_projected_image(img1, img2, X, MATRIX):
     u = projected_points[..., 0] / z
     v = projected_points[..., 1] / z
 
-    # print(f"U range: {u.min().item():.2f} ~ {u.max().item():.2f}")
-    # print(f"V range: {v.min().item():.2f} ~ {v.max().item():.2f}")
-
-    # fx = MATRIX[0, 0, 0].item()
-    # fy = MATRIX[0, 1, 1].item()
-    # print(f"Focal Length: fx={fx:.2f}, fy={fy:.2f}")
-
-    # # 2. 투영 전 3D 포인트의 분포 확인
-    # x_mean, x_std = X_homo[..., 0].mean().item(), X_homo[..., 0].std().item()
-    # z_mean, z_std = X_homo[..., 2].mean().item(), X_homo[..., 2].std().item()
-    # print(f"3D Point X mean: {x_mean:.4f}, std: {x_std:.4f}")
-    # print(f"3D Point Z mean: {z_mean:.4f}, std: {z_std:.4f}")
-
     grid_u = (u / (W - 1)) * 2.0 - 1.0
     grid_v = (v / (H - 1)) * 2.0 - 1.0
     grid = torch.stack([grid_u, grid_v], dim=-1).view(B, H, W, 2)

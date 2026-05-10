@@ -2,6 +2,24 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class Disparity_Loss(nn.Module):
+    def __init__(self):
+        super(Disparity_Loss, self).__init__()
+
+    def forward(self, d1, d2, valid_mask=None):
+        B = d1.shape[0]
+
+        diff = torch.abs(d1.view(B, -1, 1) - d2.view(B, -1, 1))
+
+        if valid_mask is not None:
+            valid_mask = valid_mask.view(B, -1, 1)
+            diff = diff * valid_mask
+            loss = diff.sum() / (valid_mask.sum() + 1e-7)
+        else:
+            loss = diff.mean()
+
+        return loss
+
 class pointmap_Loss(nn.Module):
     def __init__(self):
         super(pointmap_Loss, self).__init__()
