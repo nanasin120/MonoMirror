@@ -9,44 +9,60 @@ def save_fixed_sample(model, dataset, epoch, save_path, device):
     with torch.no_grad():
         # 고정된 첫 번째 데이터 가져오기
         sample = dataset[0]
-        curr_img = sample['current_image'].unsqueeze(0).to(device) # [1, 3, 224, 224]
-        next_img = sample['next_image'].unsqueeze(0).to(device) # [1, 3, 224, 224]
+        prev_image = sample['prev_image'].unsqueeze(0).to(device)# [1, 3, 224, 224]
+        curr_image = sample['curr_image'].unsqueeze(0).to(device)
+        next_image = sample['next_image'].unsqueeze(0).to(device)
 
         # 모델 추론
-        XYZ1, D1, XYZ2, D2, MATRIX, MATRIX_INV = model(curr_img, next_img, True)
+        OUTPUTS = model(prev_image, curr_image, next_image, True)
+        
+        XYZ = OUTPUTS['XYZ']
+        D = OUTPUTS['D']
+        MATRIX = OUTPUTS['MATRIX']
+        MATRIX_INV = OUTPUTS['MATRIX_INV']
+
+        PREV_XYZ, CURR_XYZ, NEXT_XYZ = XYZ[0], XYZ[1], XYZ[2]
+        PREV_D, CURR_D, NEXT_D = D[0], D[1], D[2]
+        PREV_MATRIX, NEXT_MATRIX = MATRIX[0], MATRIX[1]
+        PREV_MATRIX_INV, NEXT_MATRIX_INV = MATRIX_INV[0], MATRIX_INV[1]
 
         # 재투영 이미지 생성
-        projected_img, _ = get_projected_image(curr_img, next_img, XYZ1, MATRIX)
+        projected_img_p2c, _ = get_projected_image(curr_image, prev_image, CURR_XYZ, PREV_MATRIX)
+        projected_img_n2c, _ = get_projected_image(curr_image, next_image, CURR_XYZ, NEXT_MATRIX)
 
-        depth_resized = D1.view(1, 1, 224, 224) # [1, 1, 14, 14]로 변환
+        depth_resized_p = PREV_D.view(1, 1, 224, 224) # [1, 1, 14, 14]로 변환
+        depth_resized_n = NEXT_D.view(1, 1, 224, 224) # [1, 1, 14, 14]로 변환
 
-        fg_mask = (curr_img[0].sum(dim=0, keepdim=True) > 0) # [1, 224, 224]
-        valid_depths = depth_resized[0][fg_mask]
+        viz_d_prev = get_depth_viz(PREV_D, prev_image)
+        viz_d_curr = get_depth_viz(CURR_D, curr_image)
+        viz_d_next = get_depth_viz(NEXT_D, next_image)
+
+        row1 = torch.cat([prev_image[0], curr_image[0], next_image[0]], dim=2) 
+        row2 = torch.cat([viz_d_prev[0], viz_d_curr[0], viz_d_next[0]], dim=2)
+        row3 = torch.cat([projected_img_p2c[0], curr_image[0], projected_img_n2c[0]], dim=2)
+
+        combined = torch.cat([row1, row2, row3], dim=1)
         
-        # 시각화를 위해 0~1 사이로 정규화 (가까운 곳은 밝게, 먼 곳은 어둡게)
-        depth_min = valid_depths.min()
-        depth_max = valid_depths.max()
-        depth_norm = (depth_resized - depth_min) / (depth_max - depth_min + 1e-8)
-        depth_norm = depth_norm * fg_mask.float()
+        vutils.save_image(combined, os.path.join(save_path, f'vis_epoch_{epoch:03d}.png'))
+        print(f"saved 3x3 grid image: vis_epoch_{epoch:03d}.png")
 
-        print(f"Disp min: {depth_min.item():.4f}, Disp max: {depth_max.item():.4f}, 갭: {(depth_max - depth_min).item():.4f}")
+def get_depth_viz(depth_tensor, img_tensor):
+    mask = (img_tensor.sum(dim=1, keepdim=True) > 0)
+    valid_depths = depth_tensor[mask]
+    
+    if len(valid_depths) > 0:
+        d_min, d_max = valid_depths.min(), valid_depths.max()
+    else:
+        d_min, d_max = torch.tensor(0.0), torch.tensor(1.0)
         
-        # 3채널로 복사 (이미지 결합을 위해)
-        depth_viz = depth_norm.repeat(1, 3, 1, 1)
-
-        # 시각화를 위해 두 이미지 결합 (가로로 붙이기)
-        # [1, 3, 224, 224] -> [3, 224, 448]
-        combined = torch.cat([curr_img[0], projected_img[0], depth_viz[0]], dim=2)
-        
-        # 이미지 저장 (0~1 범위 클리핑 및 저장)
-        vutils.save_image(combined, os.path.join(save_path, f'vis_epoch_{epoch}.png'))
-
-        print('saved image')
+    norm = (depth_tensor - d_min) / (d_max - d_min + 1e-8)
+    norm = norm * mask.float()
+    return norm.repeat(1, 3, 1, 1) # 3채널 복사
 
 def axis_angle_to_matrix(rot_vec):
     batch_size = rot_vec.shape[0]
-    angle = torch.norm(rot_vec + 1e-7, dim=-1, keepdim=True)
-    axis = rot_vec / angle
+    angle = torch.norm(rot_vec, dim=-1, keepdim=True)
+    axis = rot_vec / (angle + 1e-7)
     
     cos_a = torch.cos(angle).unsqueeze(-1)
     sin_a = torch.sin(angle).unsqueeze(-1)

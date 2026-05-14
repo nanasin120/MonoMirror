@@ -45,32 +45,34 @@ class CroCo(nn.Module):
             Encoder(d_model=self.patch_embedded_dim, h=12) for _ in range(self.encoder_layers)
         ])
 
-    def forward(self, image1, image2):
-        # image1 : [B, 3, H, W] [B, 3, 224, 224]
-        # image2 : [B, 3, H, W] [B, 3, 224, 224]
-
-        B = image1.shape[0]
+    def forward(self, prev_img, curr_img, next_img):
+        # image : [B, 3, H, W] [B, 3, 224, 224]
 
         # [B, 3, 224, 224] -> [B, 768, 14, 14] -> [B, 768, 196] -> [B, 196, 768]
-        p1 = self.patch_embedding(image1).flatten(2).transpose(1, 2)
-        p2 = self.patch_embedding(image2).flatten(2).transpose(1, 2)
+        prev_p = self.patch_embedding(prev_img).flatten(2).transpose(1, 2)
+        curr_p = self.patch_embedding(curr_img).flatten(2).transpose(1, 2)
+        next_p = self.patch_embedding(next_img).flatten(2).transpose(1, 2)
 
         # --- Encoder Section --- 
 
-        features_1 = []
-        features_2 = []
+        prev_features = []
+        curr_features = []
+        next_features = []
         extract_layers = [2, 5, 8, 11]
 
-        p1 = self.positionalEncoding2D(p1)
-        p2 = self.positionalEncoding2D(p2)
+        prev_p = self.positionalEncoding2D(prev_p)
+        curr_p = self.positionalEncoding2D(curr_p)
+        next_p = self.positionalEncoding2D(next_p)
         
         for i, encoder in enumerate(self.encoders):
-            p1 = encoder(p1)
-            p2 = encoder(p2)
+            prev_p = encoder(prev_p)
+            curr_p = encoder(curr_p)
+            next_p = encoder(next_p)
 
             if i in extract_layers:
-                features_1.append(p1)
-                features_2.append(p2)
+                prev_features.append(prev_p)
+                curr_features.append(curr_p)
+                next_features.append(next_p)
 
 
-        return features_1, features_2
+        return prev_features, curr_features, next_features

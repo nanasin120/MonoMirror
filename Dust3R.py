@@ -81,7 +81,7 @@ class ProjectionHead(nn.Module):
         self.img_size = 224
 
         self.intrinsic_mlp = nn.Sequential(
-            nn.Linear(d_model * 2, 256),
+            nn.Linear(d_model, 256),
             nn.GELU(),
             nn.Linear(256, 2)
         )
@@ -90,33 +90,52 @@ class ProjectionHead(nn.Module):
         with torch.no_grad(): self.intrinsic_mlp[-1].bias[:] = 150.0
 
         self.extrinsic_mlp = nn.Sequential(
-            nn.Linear(d_model * 2, 256),
+            nn.Linear(d_model * 2, d_model),
             nn.GELU(),
-            nn.Linear(256, 6)
+            nn.Linear(d_model, 6)
         )
         nn.init.normal_(self.extrinsic_mlp[-1].weight, mean=0.0, std=1e-5)
         nn.init.zeros_(self.extrinsic_mlp[-1].bias)
         with torch.no_grad(): self.extrinsic_mlp[-1].bias[:] = 0.1
 
-    def forward(self, F1, F2):
-        B = F1.shape[0]
+    def forward(self, prev_F, curr_F, next_F):
+        K = self.predict_K(prev_F, curr_F, next_F)
+        E_CURR_PREV = self.predict_E(curr_F, prev_F)
+        E_CURR_NEXT = self.predict_E(curr_F, next_F)
 
-        combined = torch.cat([F1.mean(dim=1), F2.mean(dim=1)], dim=-1)
-        intrinsic_raw = self.intrinsic_mlp(combined)
-        extrinsic_raw = self.extrinsic_mlp(combined)
+        return K, E_CURR_PREV, E_CURR_NEXT
+    
+    def predict_K(self, prev_F, curr_F, next_F):
+        B = curr_F.shape[0]
 
-        axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 3.14159 # -3.14159 ~ 3.14159
-        translation = torch.tanh(extrinsic_raw[:, 3:]) * 1.0 # -1.0 ~ 1.0
-        
+        prev_F_mean = prev_F.mean(dim=1)
+        curr_F_mean = curr_F.mean(dim=1)
+        next_F_mean = next_F.mean(dim=1)
+
+        combined_mean = (prev_F_mean + curr_F_mean + next_F_mean) / 3.0
+
+        intrinsic_raw = self.intrinsic_mlp(combined_mean)
+
         f = F.softplus(intrinsic_raw) + 50.0
         fx, fy = f[:, 0], f[:, 1]
         
-        K = torch.zeros((B, 3, 3), device=F1.device)
+        K = torch.zeros((B, 3, 3), device=curr_F.device)
         K[:, 0, 0] = fx
         K[:, 1, 1] = fy
         K[:, 0, 2] = self.img_size / 2.0  # cx (정중앙 고정)
         K[:, 1, 2] = self.img_size / 2.0  # cy (정중앙 고정)
         K[:, 2, 2] = 1.0
+
+        return K
+    
+    def predict_E(self, F1, F2):
+        B = F1.shape[0]
+
+        combined = torch.cat([F1.mean(dim=1), F2.mean(dim=1)], dim=-1)
+        extrinsic_raw = self.extrinsic_mlp(combined)    
+
+        axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 3.14159 # -3.14159 ~ 3.14159
+        translation = torch.tanh(extrinsic_raw[:, 3:]) * 0.1 # -0.1 ~ 0.1
 
         R = axis_angle_to_matrix(axis_angle) # [B, 3, 3]
         
@@ -124,7 +143,7 @@ class ProjectionHead(nn.Module):
         E[:, :3, :3] = R
         E[:, :3, 3] = translation
 
-        return K, E
+        return E
     
 class FeatureUpsampler(nn.Module):
     def __init__(self, in_channels=768, out_channels=32): # 768 -> 256 -> 128 -> 64 -> 32
@@ -251,58 +270,82 @@ class Dust3R(nn.Module):
         self.register_buffer('u', u_flat)
         self.register_buffer('v', v_flat)
 
-    def forward(self, image1, image2, sfs=False):
+    def forward(self, prev_img, curr_img, next_img, sfs=False):
         # image1 : [B, 3, H, W] [B, 3, 224, 224]
         # image2 : [B, 3, H, W] [B, 3, 224, 224]
 
-        F1, F2 = self.CroCo_Encoder(image1, image2) # [4, B, 196, 768]
+        prev_F, curr_F, next_F = self.CroCo_Encoder(prev_img, curr_img, next_img) # [4, B, 196, 768]
 
-        K, E = self.projection_head(F1[-1], F2[-1])
-        E_INV = torch.inverse(E)
+        K, E_CURR_PREV, E_CURR_NEXT = self.projection_head(prev_F[-1], curr_F[-1], next_F[-1])
+        E_CURR_PREV_INV = torch.inverse(E_CURR_PREV)
+        E_CURR_NEXT_INV = torch.inverse(E_CURR_NEXT)
 
-        G1, G2 = F1[-1], F2[-1]
+        prev_G = prev_F[-1].clone()
+        curr_G = curr_F[-1].clone()
+        next_G = next_F[-1].clone()
 
-        for decoder in self.decoders:
-            G1, G2 = decoder(G1, G2, E), decoder(G2, G1, E_INV) # [B, 196, 768]
+        for decoder in self.decoders: # [B, 196, 768]
+            tmp_curr = curr_G
+            
+            curr_from_prev = decoder(tmp_curr, prev_G, E_CURR_PREV)
+            curr_from_next = decoder(tmp_curr, next_G, E_CURR_NEXT)
 
-        G1_224x224 = self.upsampler(G1, F1) # [B, 32, 224, 224]
-        G2_224x224 = self.upsampler(G2, F2) # [B, 32, 224, 224]
+            curr_G = (curr_from_prev + curr_from_next) / 2.0
+            prev_G = decoder(prev_G, tmp_curr, E_CURR_PREV_INV)
+            next_G = decoder(next_G, tmp_curr, E_CURR_NEXT_INV)
 
-        B, C, H, W = G1_224x224.shape
+        PREV_G_224x224 = self.upsampler(prev_G, prev_F) # [B, 32, 224, 224]
+        CURR_G_224x224 = self.upsampler(curr_G, curr_F) # [B, 32, 224, 224]
+        NEXT_G_224x224 = self.upsampler(next_G, next_F) # [B, 32, 224, 224]
 
-        Z1, D1 = self.Head(G1_224x224) # [B, 1, 224, 224]
-        Z2, D2 = self.Head(G2_224x224) # [B, 1, 224, 224]
+        B, C, H, W = CURR_G_224x224.shape
 
-        Z1 = Z1.view(B, -1, 1)
-        Z2 = Z2.view(B, -1, 1)
+        PREV_Z, PREV_D = self.Head(PREV_G_224x224) # [B, 1, 224, 224]
+        CURR_Z, CURR_D = self.Head(CURR_G_224x224) # [B, 1, 224, 224]
+        NEXT_Z, NEXT_D = self.Head(NEXT_G_224x224) # [B, 1, 224, 224]
+
+        PREV_XYZ = self.get_XYZ(B, PREV_Z, K)
+        CURR_XYZ = self.get_XYZ(B, CURR_Z, K)
+        NEXT_XYZ = self.get_XYZ(B, NEXT_Z, K)
+
+        PREV_MATRIX, PREV_MATRIX_INV = self.get_MATRIX(B, K, E_CURR_PREV, E_CURR_PREV_INV)
+        NEXT_MATRIX, NEXT_MATRIX_INV = self.get_MATRIX(B, K, E_CURR_NEXT, E_CURR_NEXT_INV)
+
+        if sfs:
+            print(f"--- [Fixed Sample Monitoring] ---")
+            print(f"True fx: {K[0, 0, 0].item():.2f}, True fy: {K[0, 1, 1].item():.2f}")
+            print(f"K : \n{K}")
+            print(f"E_CURR_PREV : \n{E_CURR_PREV}")
+            print(f"E_CURR_NEXT : \n{E_CURR_NEXT}")
+            print(f"Z min: {CURR_Z.min().item():.4f}, Z max: {CURR_Z.max().item():.4f}, 갭: {(CURR_Z.max() - CURR_Z.min()).item():.4f}")
+            print(f"---------------------------------")
+
+        return {
+            'XYZ' : [PREV_XYZ, CURR_XYZ, NEXT_XYZ],
+            'D' : [PREV_D, CURR_D, NEXT_D],
+            'MATRIX' : [PREV_MATRIX, NEXT_MATRIX],
+            'MATRIX_INV' : [PREV_MATRIX_INV, NEXT_MATRIX_INV]
+        }
+    
+    def get_XYZ(self, B, Z, K):
+        Z = Z.view(B, -1, 1)
 
         fx = K[:, 0, 0].view(B, 1, 1)
         fy = K[:, 1, 1].view(B, 1, 1)
         cx = K[:, 0, 2].view(B, 1, 1)
         cy = K[:, 1, 2].view(B, 1, 1)
 
-        X1 = (self.u - cx) * Z1 / fx
-        Y1 = (self.v - cy) * Z1 / fy
-        XYZ1 = torch.cat([X1, Y1, Z1], dim=-1) # 최종 3D 좌표 [B, 50176, 3]
+        X = (self.u - cx) * Z / fx
+        Y = (self.v - cy) * Z / fy
+        XYZ = torch.cat([X, Y, Z], dim=-1) # 최종 3D 좌표 [B, 50176, 3]
 
-        # 이미지 2의 역투영 (X, Y 계산) - K는 공유한다고 가정
-        X2 = (self.u - cx) * Z2 / fx
-        Y2 = (self.v - cy) * Z2 / fy
-        XYZ2 = torch.cat([X2, Y2, Z2], dim=-1) # 최종 3D 좌표 [B, 50176, 3]
+        return XYZ
 
-        B = K.shape[0]
+    def get_MATRIX(self, B, K, E, E_INV):
         K44 = torch.eye(4, device=K.device).unsqueeze(0).repeat(B, 1, 1)
         K44[:, :3, :3] = K
 
         MATRIX = torch.bmm(K44, E)[:, :3, :]
         MATRIX_INV = torch.bmm(K44, E_INV)[:, :3, :]
 
-        if sfs:
-            print(f"--- [Fixed Sample Monitoring] ---")
-            print(f"True fx: {K[0, 0, 0].item():.2f}, True fy: {K[0, 1, 1].item():.2f}")
-            print(f"K : \n{K}")
-            print(f"E : \n{E}")
-            print(f"Z min: {Z1.min().item():.4f}, Z max: {Z1.max().item():.4f}, 갭: {(Z1.max() - Z1.min()).item():.4f}")
-            print(f"---------------------------------")
-
-        return XYZ1, D1, XYZ2, D2, MATRIX, MATRIX_INV
+        return MATRIX, MATRIX_INV

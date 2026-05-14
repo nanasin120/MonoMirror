@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class Disparity_3Frame_Loss(nn.Module):
+    def __init__(self):
+        super(Disparity_3Frame_Loss, self).__init__()
+
+    def forward(self, prev_d_warped, curr_d, next_d_warped):
+        pass
+
 class Disparity_Loss(nn.Module):
     def __init__(self):
         super(Disparity_Loss, self).__init__()
@@ -186,7 +193,36 @@ class Minimum_Reprojection_Loss(nn.Module):
         weight_loss = min_pe * valid_mask * bg_mask # [B, 1, H, W]
         
         return weight_loss.sum() / ((valid_mask * bg_mask).sum() + 1e-8)
-    
+
+class U3Frame_Loss(nn.Module):
+    def __init__(self):
+        super(U3Frame_Loss, self).__init__()
+        self.pe = photometric_error()
+
+    def forward(self, prev_img, curr_img, next_img, proj_p2c, mask_p2c, proj_n2c, mask_n2c):
+        bg_mask = (curr_img.sum(dim=1, keepdim=True) > 0).float()
+
+        pe_p2c = self.pe(curr_img, proj_p2c)
+        pe_n2c = self.pe(curr_img, proj_n2c)
+
+        pe_p2c[~mask_p2c.bool()] = 9999.0
+        pe_n2c[~mask_p2c.bool()] = 9999.0
+
+        min_pe_temporal = torch.minimum(pe_p2c, pe_n2c)
+
+        pe_source_p = self.pe(curr_img, prev_img)
+        pe_source_n = self.pe(curr_img, next_img)
+
+        min_pe_source = torch.minimum(pe_source_p, pe_source_n)
+
+        final_min_pe = torch.minimum(min_pe_temporal, min_pe_source)
+
+        valid_mask_any = mask_p2c.bool() | mask_n2c.bool()
+        total_mask = valid_mask_any.float() * bg_mask
+
+        loss = final_min_pe * total_mask
+        return loss.sum() / (total_mask.sum() + 1e-8)
+
 class Smooth_Loss(nn.Module):
     def __init__(self):
         super(Smooth_Loss, self).__init__()
