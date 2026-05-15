@@ -4,42 +4,25 @@ from ImageDataset import ImageDataset
 from defs import get_projected_image, load_croco_weights_to_dust3r, visualize_points
 from Loss import Minimum_Reprojection_Loss, Smooth_Loss
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-img_dir = r'cup_cleaned'
-full_dataset = ImageDataset(img_dir=img_dir, frame_interval=1)
+img_dir = r'cup'
+full_dataset = ImageDataset(img_dir=img_dir, frame_interval=20)
 
-model = Dust3R().to(device)
-criterion_reprojection = Minimum_Reprojection_Loss().to(device)
-criterion_smooth = Smooth_Loss().to(device)
-
+model = Dust3R().to(DEVICE)
 # load_croco_weights_to_dust3r(model, r'croco_epoch_150.pth')
+model.load_state_dict(torch.load(r"model_save\best_model_epoch.pth", weights_only=True))
 
-model.load_state_dict(torch.load(r"model_save\model_epoch_30.pth", weights_only=True))
+prev_image = full_dataset[0]['prev_image'].unsqueeze(0).to(DEVICE)
+curr_image = full_dataset[0]['curr_image'].unsqueeze(0).to(DEVICE)
+next_image = full_dataset[0]['next_image'].unsqueeze(0).to(DEVICE)
 
-current_image = full_dataset[0]['current_image'].unsqueeze(0).to(device)
-next_image = full_dataset[0]['next_image'].unsqueeze(0).to(device)
+OUTPUTS = model(prev_image, curr_image, next_image)
+XYZ = OUTPUTS['XYZ']
+PREV_XYZ, CURR_XYZ, NEXT_XYZ = XYZ[0], XYZ[1], XYZ[2]
 
-XYZ1, D1, XYZ2, D2, MATRIX, MATRIX_INV = model(current_image, next_image)
+print(CURR_XYZ[..., 0].min(), CURR_XYZ[..., 0].max())
+print(CURR_XYZ[..., 1].min(), CURR_XYZ[..., 1].max())
+print(CURR_XYZ[..., 2].min(), CURR_XYZ[..., 2].max())
 
-# B = 1
-
-# projected_img1 = get_projected_image(current_image, next_image, X1, MATRIX)
-# projected_img2 = get_projected_image(next_image, current_image, X2, MATRIX_INV)
-
-# loss_reproj_1 = criterion_reprojection(current_image, next_image, projected_img1, C1)
-# loss_reproj_2 = criterion_reprojection(next_image, current_image, projected_img2, C2)
-
-# loss_smoothloss_1 = criterion_smooth(X1.permute(0, 2, 1).reshape(B, 3, 14, 14), current_image)
-# loss_smoothloss_2 = criterion_smooth(X2.permute(0, 2, 1).reshape(B, 3, 14, 14), next_image)
-
-# loss_reproj = (loss_reproj_1 + loss_reproj_2) * 0.5
-# loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2) * 0.5
-
-# total_loss = loss_reproj + loss_smoothloss * 0.001
-
-print(XYZ1[..., 0].min(), XYZ1[..., 0].max())
-print(XYZ1[..., 1].min(), XYZ1[..., 1].max())
-print(XYZ1[..., 2].min(), XYZ1[..., 2].max())
-
-visualize_points(XYZ1[0], current_image[0])
+visualize_points(CURR_XYZ[0], curr_image[0])

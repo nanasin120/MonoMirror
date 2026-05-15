@@ -63,7 +63,7 @@ class Head(nn.Module):
 
         disp_raw = torch.sigmoid(out) # 0 ~ 1
         min_disp = 0.01 # 100
-        max_disp = 10.0 # 0.1
+        max_disp = 2.0 # 0.1
         
         # disp_raw가 0이면 0.01, 1이면 10.0
         # 0.1 ~ 10.0
@@ -134,7 +134,9 @@ class ProjectionHead(nn.Module):
         combined = torch.cat([F1.mean(dim=1), F2.mean(dim=1)], dim=-1)
         extrinsic_raw = self.extrinsic_mlp(combined)    
 
-        axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 3.14159 # -3.14159 ~ 3.14159
+        # 3.14159랑 1.0을 기본으로 생각하기
+        # 일단은 0.05와 0.1로 제약 주기
+        axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 0.05 # -3.14159 ~ 3.14159
         translation = torch.tanh(extrinsic_raw[:, 3:]) * 0.1 # -0.1 ~ 0.1
 
         R = axis_angle_to_matrix(axis_angle) # [B, 3, 3]

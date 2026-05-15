@@ -16,16 +16,16 @@ img_save_path = r'./image_save'
 if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
 BATCH = 4
-START_EPOCH = 0
-END_EPOCH = 100
+START_EPOCH = 3700
+END_EPOCH = 5000
 ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
 LEARNING_RATE = 1e-5
-IMAGE_SAVE_INTERVEL = 2
-WEIGHT_SAVE_INTERVEL = 100
+IMAGE_SAVE_INTERVEL = 50
+WEIGHT_SAVE_INTERVEL = 1001
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 img_dir = r'cup'
-full_dataset = ImageDataset(img_dir=img_dir, frame_interval=10)
+full_dataset = ImageDataset(img_dir=img_dir, frame_interval=20)
 
 dataloader = DataLoader(
     dataset=full_dataset,
@@ -35,8 +35,8 @@ dataloader = DataLoader(
 )
 
 model = Dust3R().to(DEVICE)
-# model.load_state_dict(torch.load(r'_model_save\model_epoch_100.pth', weights_only=True))
-load_croco_weights_to_dust3r(model, r'croco_epoch_150.pth')
+model.load_state_dict(torch.load(r'model_save\best_model_epoch.pth', weights_only=True))
+# load_croco_weights_to_dust3r(model, r'croco_epoch_150.pth')
 
 criterion_reprojection = Minimum_Reprojection_Loss().to(DEVICE)
 criterion_smooth = Smooth_Loss().to(DEVICE)
@@ -84,30 +84,15 @@ def train():
 
             projected_img_n2c, valid_mask_n2c = get_projected_image(curr_image, next_image, CURR_XYZ, NEXT_MATRIX)
 
-            # loss_reproj_1 = criterion_reprojection(curr_image, prev_image, projected_img_p2c, valid_mask_p2c)
-            # loss_reproj_2 = criterion_reprojection(curr_image, next_image, projected_img_n2c, valid_mask_n2c)
-
             loss_3frame = criterion_u3frame_loss(prev_image, curr_image, next_image, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c)
-
-            # loss_pointmap_1 = criterion_pointmap_loss(XYZ1, get_projected_points(XYZ2, MATRIX_INV.detach())[..., :3], valid_mask1)
-            # loss_pointmap_2 = criterion_pointmap_loss(XYZ2, get_projected_points(XYZ1, MATRIX.detach())[..., :3], valid_mask2)
-
-            # D2_warped_1, _ = get_projected_image(CURR_D, PREV_D, CURR_XYZ, PREV_MATRIX)
-            # D1_warped_2, _ = get_projected_image(CURR_D, NEXT_D, CURR_XYZ, NEXT_MATRIX)
-
-            # loss_disparity_1 = criterion_disparity_loss(D1, D2_warped_1, valid_mask1)
-            # loss_disparity_2 = criterion_disparity_loss(D2, D1_warped_2, valid_mask2)
 
             loss_smoothloss_1 = criterion_edge_smooth(PREV_D, prev_image)
             loss_smoothloss_2 = criterion_edge_smooth(CURR_D, curr_image)
             loss_smoothloss_3 = criterion_edge_smooth(NEXT_D, next_image)
 
-            # loss_reproj = (loss_reproj_1 + loss_reproj_2) * 0.5
             loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2 + loss_smoothloss_3) / 3.0
-            # loss_pointmap = (loss_pointmap_1 + loss_pointmap_2) * 0.5
-            # loss_disparity = (loss_disparity_1 + loss_disparity_2) * 0.5
 
-            total_loss = (loss_3frame * 1.0) + (loss_smoothloss * 0.001)
+            total_loss = (loss_3frame * 0.8) + (loss_smoothloss * 0.05)
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -124,7 +109,7 @@ def train():
             train_smooth_loss += loss_smoothloss.item() * 0.001
             # train_point_loss += loss_pointmap.item() * 0.001
             # train_disparity_loss += loss_disparity.item()
-            train_3frame_loss += loss_3frame.item() * 1.0
+            train_3frame_loss += loss_3frame.item() * 0.8
 
 
         avg_train_loss = train_loss / len(dataloader)

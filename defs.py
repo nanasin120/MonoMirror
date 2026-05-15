@@ -117,15 +117,22 @@ def get_projected_image(img1, img2, X, MATRIX):
     return projected_img, valid_mask
 
 def visualize_points(X, image, z_scale=1.0):
-    X = X.detach().cpu().numpy()
-    X[:, 2] = X[:, 2] * z_scale
-    X[:, 1] = X[:, 1] * -1.0
+    X = X.detach().cpu().numpy().reshape(-1, 3)
     image = image.detach().cpu()
     colors = image.permute(1, 2, 0).reshape(-1, 3).numpy()
+
+    valid_mask = (X[:, 2] > 0.1) & (X[:, 2] < 2.0)
+    
+    X = X[valid_mask]
+    colors = colors[valid_mask]
+    
+    X[:, 2] = X[:, 2] * z_scale
+    X[:, 1] = X[:, 1] * -1.0
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(X)
     pcd.colors = o3d.utility.Vector3dVector(colors)
+
     o3d.visualization.draw_geometries([pcd])
 
 def load_croco_weights_to_dust3r(model, checkpoint_path):
