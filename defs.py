@@ -43,8 +43,8 @@ def save_fixed_sample(model, dataset, epoch, save_path, device):
 
         combined = torch.cat([row1, row2, row3], dim=1)
         
-        vutils.save_image(combined, os.path.join(save_path, f'vis_epoch_{epoch:03d}.png'))
-        print(f"saved 3x3 grid image: vis_epoch_{epoch:03d}.png")
+        vutils.save_image(combined, os.path.join(save_path, f'vis_epoch_{epoch}.png'))
+        print(f"saved 3x3 grid image: vis_epoch_{epoch}.png")
 
 def get_depth_viz(depth_tensor, img_tensor):
     mask = (img_tensor.sum(dim=1, keepdim=True) > 0)
@@ -121,7 +121,7 @@ def visualize_points(X, image, z_scale=1.0):
     image = image.detach().cpu()
     colors = image.permute(1, 2, 0).reshape(-1, 3).numpy()
 
-    valid_mask = (X[:, 2] > 0.1) & (X[:, 2] < 2.0)
+    valid_mask = (0.1 < X[:, 2]) & (X[:, 2] < 2.0) # 깊이값 이상치 제거
     
     X = X[valid_mask]
     colors = colors[valid_mask]

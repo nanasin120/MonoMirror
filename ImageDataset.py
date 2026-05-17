@@ -30,13 +30,16 @@ class ImageDataset(Dataset):
             'curr_image' : self.images[30 + self.frame_interval],
             'next_image' : self.images[30 + self.frame_interval * 2]
         }
-        src1_path = os.path.join(self.img_dir, self.img_files[idx])
-        src2_path = os.path.join(self.img_dir, self.img_files[idx + self.frame_interval])
+        # src1_path = os.path.join(self.img_dir, self.img_files[idx])
+        # src2_path = os.path.join(self.img_dir, self.img_files[idx + self.frame_interval])
+        # src2_path = os.path.join(self.img_dir, self.img_files[idx + self.frame_interval * 2])
 
-        current_image = self.transform(Image.open(src1_path).convert('RGB'))
-        next_image = self.transform(Image.open(src2_path).convert('RGB'))
+        # prev_image = self.transform(Image.open(src1_path).convert('RGB'))
+        # curr_image = self.transform(Image.open(src2_path).convert('RGB'))
+        # next_image = self.transform(Image.open(src2_path).convert('RGB'))
 
         return {
-            'current_image' : current_image,
-            'next_image' : next_image
+            'prev_image' : self.images[idx],
+            'curr_image' : self.images[idx + self.frame_interval],
+            'next_image' : self.images[idx + self.frame_interval * 2]
         }

@@ -74,8 +74,8 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
 
         # 이미지 색상이 변하면 깊이 평활화를 꺼버림 (exp(-색상변화))
         # 색상 변화가 클수록 가중치가 0에 가까워져서 Smooth Loss가 무시됨
-        weight_x = torch.exp(-img_dx * 100.0)
-        weight_y = torch.exp(-img_dy * 100.0)
+        weight_x = torch.exp(-img_dx * 50.0)
+        weight_y = torch.exp(-img_dy * 50.0)
 
         # 최종 Loss 계산
         smoothness_x = disp_dx * weight_x

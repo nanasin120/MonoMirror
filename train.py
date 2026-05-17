@@ -16,12 +16,12 @@ img_save_path = r'./image_save'
 if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
 BATCH = 4
-START_EPOCH = 3700
-END_EPOCH = 5000
+START_EPOCH = 0
+END_EPOCH = 100
 ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
 LEARNING_RATE = 1e-5
-IMAGE_SAVE_INTERVEL = 50
-WEIGHT_SAVE_INTERVEL = 1001
+IMAGE_SAVE_INTERVEL = 2
+WEIGHT_SAVE_INTERVEL = 100
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 img_dir = r'cup'
@@ -35,8 +35,8 @@ dataloader = DataLoader(
 )
 
 model = Dust3R().to(DEVICE)
-model.load_state_dict(torch.load(r'model_save\best_model_epoch.pth', weights_only=True))
-# load_croco_weights_to_dust3r(model, r'croco_epoch_150.pth')
+# model.load_state_dict(torch.load(r'model_save\best_model_epoch.pth', weights_only=True))
+load_croco_weights_to_dust3r(model, r'croco_epoch_150.pth')
 
 criterion_reprojection = Minimum_Reprojection_Loss().to(DEVICE)
 criterion_smooth = Smooth_Loss().to(DEVICE)
@@ -44,6 +44,7 @@ criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
 criterion_pointmap_loss = pointmap_Loss().to(DEVICE)
 criterion_disparity_loss = Disparity_Loss().to(DEVICE)
 criterion_u3frame_loss = U3Frame_Loss().to(DEVICE)
+
 
 optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
 scheduler = CosineAnnealingLR(optimizer, T_max=ADDITIONAL_EPOCH, eta_min=1e-6)
@@ -86,13 +87,17 @@ def train():
 
             loss_3frame = criterion_u3frame_loss(prev_image, curr_image, next_image, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c)
 
+            # loss_reproj_1 = criterion_reprojection(curr_image, prev_image, projected_img_p2c, valid_mask_p2c)
+            # loss_reproj_2 = criterion_reprojection(curr_image, next_image, projected_img_n2c, valid_mask_n2c)
+            # loss_3frame = (loss_reproj_1 + loss_reproj_2) / 2.0
+
             loss_smoothloss_1 = criterion_edge_smooth(PREV_D, prev_image)
             loss_smoothloss_2 = criterion_edge_smooth(CURR_D, curr_image)
             loss_smoothloss_3 = criterion_edge_smooth(NEXT_D, next_image)
 
             loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2 + loss_smoothloss_3) / 3.0
 
-            total_loss = (loss_3frame * 0.8) + (loss_smoothloss * 0.05)
+            total_loss = (loss_3frame * 1.0) + (loss_smoothloss * 0.001)
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -109,7 +114,7 @@ def train():
             train_smooth_loss += loss_smoothloss.item() * 0.001
             # train_point_loss += loss_pointmap.item() * 0.001
             # train_disparity_loss += loss_disparity.item()
-            train_3frame_loss += loss_3frame.item() * 0.8
+            train_3frame_loss += loss_3frame.item() * 1.0
 
 
         avg_train_loss = train_loss / len(dataloader)

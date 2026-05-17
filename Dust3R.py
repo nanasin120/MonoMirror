@@ -45,9 +45,9 @@ class Decoder(nn.Module):
 
         return after_ffn
     
-class Head(nn.Module):
+class DepthHead(nn.Module):
     def __init__(self, in_channel=32):
-        super(Head, self).__init__()
+        super(DepthHead, self).__init__()
 
         self.MLP = nn.Sequential(
             nn.Conv2d(in_channels=in_channel, out_channels=in_channel, kernel_size=3, padding=1),
@@ -55,7 +55,7 @@ class Head(nn.Module):
             nn.Conv2d(in_channels=in_channel, out_channels=1, kernel_size=1),
         )
 
-        nn.init.normal_(self.MLP[-1].weight, std=1e-4)
+        nn.init.normal_(self.MLP[-1].weight, std=1e-5)
         nn.init.zeros_(self.MLP[-1].bias)
 
     def forward(self, all_G):
@@ -87,16 +87,21 @@ class ProjectionHead(nn.Module):
         )
         nn.init.normal_(self.intrinsic_mlp[-1].weight, mean=0.0, std=1e-5)
         nn.init.zeros_(self.intrinsic_mlp[-1].bias)
-        with torch.no_grad(): self.intrinsic_mlp[-1].bias[:] = 150.0
 
-        self.extrinsic_mlp = nn.Sequential(
-            nn.Linear(d_model * 2, d_model),
-            nn.GELU(),
-            nn.Linear(d_model, 6)
+        self.extrinsic_conv = nn.Sequential(
+            nn.Conv2d(d_model * 2, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(256, 6)
         )
-        nn.init.normal_(self.extrinsic_mlp[-1].weight, mean=0.0, std=1e-5)
-        nn.init.zeros_(self.extrinsic_mlp[-1].bias)
-        with torch.no_grad(): self.extrinsic_mlp[-1].bias[:] = 0.1
+        # 여기 0으로 초기화했을때는 1.0으로 고정되었었는데 지금은 아님
+        nn.init.normal_(self.extrinsic_conv[-1].weight, mean=0.0, std=1e-5)
+        nn.init.zeros_(self.extrinsic_conv[-1].bias)
 
     def forward(self, prev_F, curr_F, next_F):
         K = self.predict_K(prev_F, curr_F, next_F)
@@ -116,7 +121,7 @@ class ProjectionHead(nn.Module):
 
         intrinsic_raw = self.intrinsic_mlp(combined_mean)
 
-        f = F.softplus(intrinsic_raw) + 50.0
+        f = torch.tanh(intrinsic_raw) * 100.0 + 200.0 # 100 ~ 300
         fx, fy = f[:, 0], f[:, 1]
         
         K = torch.zeros((B, 3, 3), device=curr_F.device)
@@ -131,14 +136,19 @@ class ProjectionHead(nn.Module):
     def predict_E(self, F1, F2):
         B = F1.shape[0]
 
-        combined = torch.cat([F1.mean(dim=1), F2.mean(dim=1)], dim=-1)
-        extrinsic_raw = self.extrinsic_mlp(combined)    
+        F1_spatial = F1.permute(0, 2, 1).view(B, -1, 14, 14)
+        F2_spatial = F2.permute(0, 2, 1).view(B, -1, 14, 14)
+
+        combined = torch.cat([F1_spatial, F2_spatial], dim=1) # [B, d_model * 2, 14, 14]
+        extrinsic_raw = self.extrinsic_conv(combined)
 
         # 3.14159랑 1.0을 기본으로 생각하기
         # 일단은 0.05와 0.1로 제약 주기
-        axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 0.05 # -3.14159 ~ 3.14159
+        # tanh를 빼봄
+        # 360도를 돌 필요가 없으니 360 / 8정도로
+        axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 3.14159 / 8.0 # -3.14159 ~ 3.14159
         translation = torch.tanh(extrinsic_raw[:, 3:]) * 0.1 # -0.1 ~ 0.1
-
+        
         R = axis_angle_to_matrix(axis_angle) # [B, 3, 3]
         
         E = torch.eye(4, device=F1.device).unsqueeze(0).repeat(B, 1, 1) # [B, 4, 4]
@@ -261,7 +271,7 @@ class Dust3R(nn.Module):
 
         self.upsampler = FeatureUpsampler()
 
-        self.Head = Head()
+        self.depth_Head = DepthHead()
 
         H, W = 224, 224
         y, x = torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij')
@@ -302,9 +312,9 @@ class Dust3R(nn.Module):
 
         B, C, H, W = CURR_G_224x224.shape
 
-        PREV_Z, PREV_D = self.Head(PREV_G_224x224) # [B, 1, 224, 224]
-        CURR_Z, CURR_D = self.Head(CURR_G_224x224) # [B, 1, 224, 224]
-        NEXT_Z, NEXT_D = self.Head(NEXT_G_224x224) # [B, 1, 224, 224]
+        PREV_Z, PREV_D = self.depth_Head(PREV_G_224x224) # [B, 1, 224, 224]
+        CURR_Z, CURR_D = self.depth_Head(CURR_G_224x224) # [B, 1, 224, 224]
+        NEXT_Z, NEXT_D = self.depth_Head(NEXT_G_224x224) # [B, 1, 224, 224]
 
         PREV_XYZ = self.get_XYZ(B, PREV_Z, K)
         CURR_XYZ = self.get_XYZ(B, CURR_Z, K)

@@ -11,7 +11,7 @@ full_dataset = ImageDataset(img_dir=img_dir, frame_interval=20)
 
 model = Dust3R().to(DEVICE)
 # load_croco_weights_to_dust3r(model, r'croco_epoch_150.pth')
-model.load_state_dict(torch.load(r"model_save\best_model_epoch.pth", weights_only=True))
+model.load_state_dict(torch.load(r"_model_save\best_model_epoch.pth", weights_only=True))
 
 prev_image = full_dataset[0]['prev_image'].unsqueeze(0).to(DEVICE)
 curr_image = full_dataset[0]['curr_image'].unsqueeze(0).to(DEVICE)
