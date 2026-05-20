@@ -25,3 +25,17 @@ Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연�
 <img width="953" height="557" alt="image" src="https://github.com/user-attachments/assets/0b89c50d-e1ea-4aac-89bc-1dd634dae478" />
 <img width="953" height="554" alt="image" src="https://github.com/user-attachments/assets/6599156f-58f8-4cc7-b4ab-4383facb3a53" />
 
+---
+# 겪은 문제들
+## 1. translation 학습 안됨
+- 증상 : 카메라의 이동이 0.1로 고정되어 학습이 되지 않음
+- 원인 : 가중치를 0.0으로 초기화 하는 바람에 기울기가 0이 되어 학습이 진행되지 않음
+- 해결 : 가중치를 std=1e-5로 초기화
+## 2. depth는 그대로인데 loss는 떨어짐
+- 증상 : depth는 gap없이 0.999로 고정되어있는데 Loss는 계속해서 떨어짐
+- 원인 : 초점거리를 최소로 줄여 강제로 맞춤
+- 해결 : torch.tanh(intrinsic_raw) * 100.0 + 200.0를 이용해 200에서 시작해 100 ~ 300사이의 값을 갖게 함
+## 3. Minimum_Reprojection_Loss 버그
+- 증상 : Minimum_Reprojection_Loss가 제대로 작동을 안함
+- 원인 : mask 적용에서 잘못 덮어씌움. [pe_n2c[~mask_p2c.bool()]]
+- 해결 : [pe_n2c[~mask_p2c.bool()]]를 pe_n2c[~mask_n2c.bool()]로 고
