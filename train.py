@@ -56,10 +56,7 @@ def train():
     for epoch in range(START_EPOCH, END_EPOCH + 1):
         model.train()
         train_loss = 0.0
-        train_reproj_loss = 0.0
         train_smooth_loss = 0.0
-        train_point_loss = 0.0
-        train_disparity_loss = 0.0
         train_3frame_loss = 0.0
         epoch_start_time = time.time()
 
@@ -87,10 +84,6 @@ def train():
 
             loss_3frame = criterion_u3frame_loss(prev_image, curr_image, next_image, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c)
 
-            # loss_reproj_1 = criterion_reprojection(curr_image, prev_image, projected_img_p2c, valid_mask_p2c)
-            # loss_reproj_2 = criterion_reprojection(curr_image, next_image, projected_img_n2c, valid_mask_n2c)
-            # loss_3frame = (loss_reproj_1 + loss_reproj_2) / 2.0
-
             loss_smoothloss_1 = criterion_edge_smooth(PREV_D, prev_image)
             loss_smoothloss_2 = criterion_edge_smooth(CURR_D, curr_image)
             loss_smoothloss_3 = criterion_edge_smooth(NEXT_D, next_image)
@@ -110,18 +103,12 @@ def train():
                 batch_start_time = time.time()
 
             train_loss += total_loss.item()
-            # train_reproj_loss += loss_reproj.item() * 0.5
             train_smooth_loss += loss_smoothloss.item() * 0.001
-            # train_point_loss += loss_pointmap.item() * 0.001
-            # train_disparity_loss += loss_disparity.item()
             train_3frame_loss += loss_3frame.item() * 1.0
 
 
         avg_train_loss = train_loss / len(dataloader)
-        # avg_train_reproj_loss = train_reproj_loss / len(dataloader)
         avg_train_smooth_loss = train_smooth_loss / len(dataloader)
-        # avg_train_point_loss = train_point_loss / len(dataloader)
-        # avg_train_disparity_loss = train_disparity_loss / len(dataloader)
         avg_3frame_loss = train_3frame_loss / len(dataloader)
 
         epoch_end_time = time.time()

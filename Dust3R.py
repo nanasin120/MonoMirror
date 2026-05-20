@@ -254,6 +254,68 @@ class FeatureUpsampler(nn.Module):
 
         return x
 
+class ImplicitDepthHead(nn.Module):
+    def __init__(self, in_channels=768, img_size=224):
+        super(ImplicitDepthHead, self).__init__()
+
+        self.proj_G = nn.Conv2d(in_channels, 64, kernel_size=1)
+        self.proj_F = nn.Conv2d(in_channels, 64, kernel_size=1)
+
+        self.mlp = nn.Sequential(
+            nn.Linear(64 + 64 + 2, 64), # in_channels + in_channels + 좌표(u, v)
+            nn.GELU(),
+            nn.Linear(64, 32),
+            nn.GELU(),
+            nn.Linear(32, 1)
+        )
+
+        y, x = torch.meshgrid(
+            torch.linspace(-1.0, 1.0, img_size),
+            torch.linspace(-1.0, 1.0, img_size),
+            indexing='ij'
+        )
+
+        uv_grid = torch.stack([x, y], dim=-1).unsqueeze(0) # [1, 224, 224, x]
+        self.register_buffer('uv_grid', uv_grid)
+    
+    def forward(self, G, F_single):
+        # G : [B, 196, 768]
+        # u_flat, v_flat : 해상도 좌표 [224 x 224, 1]
+        B = G.shape[0]
+
+        G_spatial = G.transpose(1, 2).view(B, 768, 14, 14) # [B, 768, 14, 14]
+        F_spatial = F_single.transpose(1, 2).view(B, 768, 14, 14) # [B, 768, 14, 14]
+
+        G_low = self.proj_G(G_spatial) # [B, 64, 14, 14]
+        F_low = self.proj_F(F_spatial) # [B, 64, 14, 14]
+
+        batch_uv_grid = self.uv_grid.repeat(B, 1, 1, 1) # [B, 224, 224, 2]
+
+        G_sampled = F.grid_sample(G_low, batch_uv_grid, mode='bilinear', align_corners=False) # [B, 64, 224, 224]
+        F_sampled = F.grid_sample(F_low, batch_uv_grid, mode='bilinear', align_corners=False) # [B, 64, 224, 224]
+
+        G_flat = G_sampled.flatten(2).transpose(1, 2) # [B, 224x224, 64]
+        F_flat = F_sampled.flatten(2).transpose(1, 2)
+        uv_flat_batch = batch_uv_grid.flatten(1, 2) # [B, 224x224, 2]
+
+        combined = torch.cat([G_flat, F_flat, uv_flat_batch], dim=-1) # [B, 224x224, 64 + 64 + 2]
+        out = self.mlp(combined) # [B, 224x224, 1]
+
+        disp_raw = torch.sigmoid(out.transpose(1, 2).view(B, 1, 224, 224)) # [B, 1, 224, 224]
+
+        min_disp = 0.01 # 100
+        max_disp = 2.0 # 0.1
+        
+        # disp_raw가 0이면 0.01, 1이면 10.0
+        # 0.1 ~ 10.0
+        scaled_disp = min_disp + (max_disp - min_disp) * disp_raw 
+        
+        # disp_raw가 0이면 1/0.01 = 100, 1이면 1/10 = 0.1
+        # 0.1 ~ 100.0
+        Z_coord_safe = 1.0 / scaled_disp 
+
+        return Z_coord_safe, scaled_disp
+
 class Dust3R(nn.Module):
     def __init__(self):
         super(Dust3R, self).__init__()
@@ -269,22 +331,24 @@ class Dust3R(nn.Module):
             Decoder(d_model=self.patch_embedded_dim, h=12) for _ in range(self.decoder_layers)
         ])
 
-        self.upsampler = FeatureUpsampler()
+        # self.upsampler = FeatureUpsampler()
 
-        self.depth_Head = DepthHead()
+        # self.depth_Head = DepthHead()
+
+        self.implictDepthHead = ImplicitDepthHead()
 
         H, W = 224, 224
         y, x = torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij')
 
-        u_flat = x.float().view(-1, 1)
-        v_flat = y.float().view(-1, 1)
+        u_flat = (x.float() + 0.5).view(-1, 1)
+        v_flat = (y.float() + 0.5).view(-1, 1)
 
         self.register_buffer('u', u_flat)
         self.register_buffer('v', v_flat)
 
     def forward(self, prev_img, curr_img, next_img, sfs=False):
-        # image1 : [B, 3, H, W] [B, 3, 224, 224]
-        # image2 : [B, 3, H, W] [B, 3, 224, 224]
+        # image : [B, 3, H, W] [B, 3, 224, 224]
+        B = prev_img.shape[0]
 
         prev_F, curr_F, next_F = self.CroCo_Encoder(prev_img, curr_img, next_img) # [4, B, 196, 768]
 
@@ -306,15 +370,19 @@ class Dust3R(nn.Module):
             prev_G = decoder(prev_G, tmp_curr, E_CURR_PREV_INV)
             next_G = decoder(next_G, tmp_curr, E_CURR_NEXT_INV)
 
-        PREV_G_224x224 = self.upsampler(prev_G, prev_F) # [B, 32, 224, 224]
-        CURR_G_224x224 = self.upsampler(curr_G, curr_F) # [B, 32, 224, 224]
-        NEXT_G_224x224 = self.upsampler(next_G, next_F) # [B, 32, 224, 224]
+        # PREV_G_224x224 = self.upsampler(prev_G, prev_F) # [B, 32, 224, 224]
+        # CURR_G_224x224 = self.upsampler(curr_G, curr_F) # [B, 32, 224, 224]
+        # NEXT_G_224x224 = self.upsampler(next_G, next_F) # [B, 32, 224, 224]
 
-        B, C, H, W = CURR_G_224x224.shape
+        # B, C, H, W = CURR_G_224x224.shape
 
-        PREV_Z, PREV_D = self.depth_Head(PREV_G_224x224) # [B, 1, 224, 224]
-        CURR_Z, CURR_D = self.depth_Head(CURR_G_224x224) # [B, 1, 224, 224]
-        NEXT_Z, NEXT_D = self.depth_Head(NEXT_G_224x224) # [B, 1, 224, 224]
+        # PREV_Z, PREV_D = self.depth_Head(PREV_G_224x224) # [B, 1, 224, 224]
+        # CURR_Z, CURR_D = self.depth_Head(CURR_G_224x224) # [B, 1, 224, 224]
+        # NEXT_Z, NEXT_D = self.depth_Head(NEXT_G_224x224) # [B, 1, 224, 224]
+
+        PREV_Z, PREV_D = self.implictDepthHead(prev_G, prev_F[-1])
+        CURR_Z, CURR_D = self.implictDepthHead(curr_G, curr_F[-1])
+        NEXT_Z, NEXT_D = self.implictDepthHead(next_G, next_F[-1])
 
         PREV_XYZ = self.get_XYZ(B, PREV_Z, K)
         CURR_XYZ = self.get_XYZ(B, CURR_Z, K)

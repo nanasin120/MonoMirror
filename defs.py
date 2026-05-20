@@ -102,11 +102,12 @@ def get_projected_image(img1, img2, X, MATRIX):
     u = projected_points[..., 0] / z
     v = projected_points[..., 1] / z
 
-    grid_u = (u / (W - 1)) * 2.0 - 1.0
-    grid_v = (v / (H - 1)) * 2.0 - 1.0
+    # 0.5를 더하는 로직을 추가했기에 (W-1)이 아닌 W로 나눔
+    grid_u = (u / W) * 2.0 - 1.0
+    grid_v = (v / H) * 2.0 - 1.0
     grid = torch.stack([grid_u, grid_v], dim=-1).view(B, H, W, 2)
 
-    projected_img = F.grid_sample(img2, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
+    projected_img = F.grid_sample(img2, grid, mode='bilinear', padding_mode='zeros', align_corners=False)
 
     valid_z = (raw_z > 0).float()
     valid_u = ((grid_u >= -1.0) & (grid_u <= 1.0)).float()

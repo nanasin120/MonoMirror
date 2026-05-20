@@ -143,7 +143,7 @@ class SSIM(nn.Module): # 두 이미지가 얼마나 비슷한가
         # 같으면 손실이 0, 다르면 1 이렇게 반환됨
         return 1 - (n / d).mean()
 
-class photometric_error(nn.Module):
+class photometric_error(nn.Module): # 두 이미지가 얼마나 비슷한가, SSIM + L1 Loss
     def __init__(self):
         super(photometric_error, self).__init__()
         self.a = 0.85 # SSIM비율, 논문에 따름
@@ -153,14 +153,16 @@ class photometric_error(nn.Module):
         # A는 모델이 만든 사진
         # B는 카메라로 찍은 사진 
 
-        ssim = self.ssim(image_B, image_A) # [B, 3, H, W]
+        ssim = self.ssim(image_B, image_A) # [B, 3, H, W] 
         
         # 1 - ssim이게 오차임, 이게 0이면 좋은거임
         # /2를 해주는 이유는 압축을 더 안전하게 하기 위해
         # 0 ~ 1은 혹시 모를 안전장치
+        # 두 사진이 얼마나 닮았나
         ssim = torch.clamp((1 - ssim) / 2, 0, 1).mean(1, keepdim=True) # [B, 1, H, W]
 
         # 색상 픽셀끼리 빼고 절대값 씌움
+        # L1 loss 픽셀:픽셀 이걸로 확인, 절대값임 제곱 아님
         l1 = torch.abs(image_A - image_B).mean(1, keepdim=True) # [B, 1, H, W]
 
         # 황금 비율로 섞어서 반환
@@ -194,36 +196,50 @@ class Minimum_Reprojection_Loss(nn.Module):
         
         return weight_loss.sum() / ((valid_mask * bg_mask).sum() + 1e-8)
 
-class U3Frame_Loss(nn.Module):
+class U3Frame_Loss(nn.Module): # 이전, 현재, 이후 를 이용한 재투영 오차 + 원본 오차
     def __init__(self):
         super(U3Frame_Loss, self).__init__()
         self.pe = photometric_error()
 
     def forward(self, prev_img, curr_img, next_img, proj_p2c, mask_p2c, proj_n2c, mask_n2c):
-        bg_mask = (curr_img.sum(dim=1, keepdim=True) > 0).float()
+        bg_mask = (curr_img.sum(dim=1, keepdim=True) > 0).float() # 배경 검정색인거 mask
 
-        pe_p2c = self.pe(curr_img, proj_p2c)
-        pe_n2c = self.pe(curr_img, proj_n2c)
+        pe_p2c = self.pe(curr_img, proj_p2c) # prev -> curr가 curr_img와 얼마나 닮았나
+        pe_n2c = self.pe(curr_img, proj_n2c) # next -> curr가 curr_img와 얼마나 닮았나
 
-        pe_p2c[~mask_p2c.bool()] = 9999.0
-        pe_n2c[~mask_p2c.bool()] = 9999.0
+        # 재투영할때 나온 mask 적용
+        # 9999.0을 적용하는 이유는 minimum에서 예외 처리하기 위해
+        pe_p2c[~mask_p2c.bool()] = 9999.0 
+        pe_n2c[~mask_n2c.bool()] = 9999.0
 
+        # minimum은 같은 위치값중 더 작은값만을 이용한 텐서를 만들어냄
+        # p2c와 n2c의 오차를 합친 pe 완성
         min_pe_temporal = torch.minimum(pe_p2c, pe_n2c)
+        # min_pe_temporal = (pe_p2c + pe_n2c) / 2.0 # 1장 과적합용. 지금은 E가 같게 나와서 안됨
 
+        # auto masking 용
+        # 앞차가 계속 나오는 상황을 생각하면 됨
         pe_source_p = self.pe(curr_img, prev_img)
         pe_source_n = self.pe(curr_img, next_img)
 
+        # 원본 오차 합치기
         min_pe_source = torch.minimum(pe_source_p, pe_source_n)
 
+        # 광도 오차와 원본 오차를 합친 최종 오차 완성
         final_min_pe = torch.minimum(min_pe_temporal, min_pe_source)
 
+        # 이전에 재투영 할떄 나온 mask 합치기
         valid_mask_any = mask_p2c.bool() | mask_n2c.bool()
+
+        # 재투영 mask + 배경 mask 합치기
         total_mask = valid_mask_any.float() * bg_mask
 
+        # 최종 Loss = (광도 오차 + 원본 오차) * (재투영 mask + 배경 mask)
         loss = final_min_pe * total_mask
+
         return loss.sum() / (total_mask.sum() + 1e-8)
 
-class Smooth_Loss(nn.Module):
+class Smooth_Loss(nn.Module): # 깊이값을 부드럽게 만들어 주는 Loss
     def __init__(self):
         super(Smooth_Loss, self).__init__()
 

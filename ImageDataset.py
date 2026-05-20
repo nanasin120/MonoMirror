@@ -21,15 +21,16 @@ class ImageDataset(Dataset):
             self.images.append(img_tensor)
         
     def __len__(self):
-        return 1
+        # return 1
         return len(self.img_files) - self.frame_interval * 2
     
     def __getitem__(self, idx):
-        return {
-            'prev_image' : self.images[30],
-            'curr_image' : self.images[30 + self.frame_interval],
-            'next_image' : self.images[30 + self.frame_interval * 2]
-        }
+        # return {
+        #     'prev_image' : self.images[30],
+        #     'curr_image' : self.images[30 + self.frame_interval],
+        #     'next_image' : self.images[30 + self.frame_interval * 2]
+        # }
+        
         # src1_path = os.path.join(self.img_dir, self.img_files[idx])
         # src2_path = os.path.join(self.img_dir, self.img_files[idx + self.frame_interval])
         # src2_path = os.path.join(self.img_dir, self.img_files[idx + self.frame_interval * 2])
