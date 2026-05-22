@@ -38,4 +38,8 @@ Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연�
 ## 3. Minimum_Reprojection_Loss 버그
 - 증상 : Minimum_Reprojection_Loss가 제대로 작동을 안함
 - 원인 : mask 적용에서 잘못 덮어씌움. [pe_n2c[~mask_p2c.bool()]]
-- 해결 : [pe_n2c[~mask_p2c.bool()]]를 pe_n2c[~mask_n2c.bool()]로 고
+- 해결 : [pe_n2c[~mask_p2c.bool()]]를 pe_n2c[~mask_n2c.bool()]로 수정
+## 4. 연산량이 너무 커짐
+- 증상 : upsampling과 depthHead로 이어지는 과정에서 연산량이 너무나도 커짐
+- 원인 : 수많은 conv2d, skip connection 등이 주요 이유
+- 해결 : Instant-NGP에서 영감받은 ImplictDepthHead로 깊이 추정 아키텍처를 교체
