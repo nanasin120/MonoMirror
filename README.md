@@ -28,6 +28,7 @@ Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연�
 ## 2026-05-24 진행 상태
 데이터셋을 이용해 과적합중
 - Test Setup : interval=3, Batch Size=4, 240 Epochs
+- Loss : smoothloss=0.001, U3frame=1.0
 - Key Result & Observations:
 <img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/0fe4635a-4f0c-4699-bceb-30a36a073aa6" />
 <img width="1906" height="1105" alt="image" src="https://github.com/user-attachments/assets/f546e7a7-5127-4f06-bba7-bd9d7e31da10" />
