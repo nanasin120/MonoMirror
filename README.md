@@ -43,3 +43,7 @@ Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연�
 - 증상 : upsampling과 depthHead로 이어지는 과정에서 연산량이 너무나도 커짐
 - 원인 : 수많은 conv2d, skip connection 등이 주요 이유
 - 해결 : Instant-NGP에서 영감받은 ImplictDepthHead로 깊이 추정 아키텍처를 교체
+## 5. 카메라 외부 파라미터가 똑같이 나옴
+- 증상 : prev와 next의 카메라 외부 파라미터가 똑같이 나옴. 이는 서로가 똑같이 이동하고 회전했다는것인데 말이 되지 않음
+- 원인 : 데이터 부족으로 추측함
+- 해결 : F1, F2만 concat했던것과 달리 서로의 차이 Diff = F1 - F2도 concat에 포함해서 학습
