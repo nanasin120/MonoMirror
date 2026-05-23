@@ -25,6 +25,14 @@ Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연�
 <img width="953" height="557" alt="image" src="https://github.com/user-attachments/assets/0b89c50d-e1ea-4aac-89bc-1dd634dae478" />
 <img width="953" height="554" alt="image" src="https://github.com/user-attachments/assets/6599156f-58f8-4cc7-b4ab-4383facb3a53" />
 
+## 2026-05-24 진행 상태
+데이터셋을 이용해 과적합중
+- Test Setup : interval=3, Batch Size=4, 240 Epochs
+- Key Result & Observations:
+<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/0fe4635a-4f0c-4699-bceb-30a36a073aa6" />
+<img width="1906" height="1105" alt="image" src="https://github.com/user-attachments/assets/f546e7a7-5127-4f06-bba7-bd9d7e31da10" />
+
+
 ---
 # 겪은 문제들
 ## 1. translation 학습 안됨
@@ -43,7 +51,7 @@ Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연�
 - 증상 : upsampling과 depthHead로 이어지는 과정에서 연산량이 너무나도 커짐
 - 원인 : 수많은 conv2d, skip connection 등이 주요 이유
 - 해결 : Instant-NGP에서 영감받은 ImplictDepthHead로 깊이 추정 아키텍처를 교체
-## 5. 카메라 외부 파라미터가 똑같이 나옴
+## 5. 카메라 외부 파라미터가 똑같이 나옴 [2025-05-24]
 - 증상 : prev와 next의 카메라 외부 파라미터가 똑같이 나옴. 이는 서로가 똑같이 이동하고 회전했다는것인데 말이 되지 않음
 - 원인 : 데이터 부족으로 추측함
 - 해결 : F1, F2만 concat했던것과 달리 서로의 차이 Diff = F1 - F2도 concat에 포함해서 학습
