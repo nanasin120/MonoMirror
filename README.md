@@ -50,18 +50,46 @@ Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연�
 U3FrameLoss에 다음과 같은 손실을 넣어서 이미지를 재투영 할때 픽셀이 많이 밖으로 나가면 손실을 얻게 만듬
 ### 학습
 에포크는 1000, LEARNING_RATE는 5e-5, schedular는 OneCycleLR로 변경
-<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/1a61e12f-4c0b-41ca-b9b8-58727707ef94" />
-<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/a03559c9-50c3-4a37-bba8-e6ba977deabb" />
-<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/8664e1b7-50ae-41a4-8e42-348a217f5c13" />
-<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/c3c34324-8351-415d-ad74-7317ed8e693e" />
-<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/bc85105b-6e88-44f1-b403-278073f4aadc" />
-<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/b876c14a-69a9-4481-b2b2-12b8c516efc1" />
+<img width="672" height="672" alt="ezgif com-animated-gif-maker (2)" src="https://github.com/user-attachments/assets/47898643-af6d-4c2c-b4b9-21a4260fd36d" />
 
 순서대로 0, 20, 40, 60, 80, 100. 100번에서 터진것처럼 보이지만
 
 <img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/81def350-3c84-4ae8-81cd-9fda4d92d9cd" />
 
 140에서 다시 돌아오기 시작. 그래서 현재는 계속 학습 진행중
+### 결과
+<img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/c5678219-7ae5-4a7f-92b6-6bc0e694b181" />
+
+0, 100, 150, 200, 250, 300, 350, 400, 450, 500, 535 순서. 535에서 멈춘 이유는 더이상 변하는 것이 없는것 같아서
+
+Epoch [535/1000] Batch [0/9] Loss_total : 0.0621 Time : 0.5008
+```
+==> Epoch 535 완료 Train Loss : 0.0754 Train Reproj Loss : 0.0753 Train Smooth Loss : 0.0000 Time : 5.3203
+--- [Fixed Sample Monitoring] ---
+True fx: 160.00, True fy: 160.00
+K : 
+tensor([[[160.,   0., 112.],
+         [  0., 160., 112.],
+         [  0.,   0.,   1.]]], device='cuda:0')
+E_CURR_PREV : 
+tensor([[[ 0.9762,  0.2050,  0.0706, -0.0461],
+         [-0.1998,  0.9770, -0.0744,  0.0467],
+         [-0.0842,  0.0585,  0.9947,  0.0500],
+         [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+E_CURR_NEXT : 
+tensor([[[ 0.9742,  0.2174,  0.0600, -0.0460],
+         [-0.2119,  0.9735, -0.0861,  0.0463],
+         [-0.0771,  0.0711,  0.9945,  0.0500],
+         [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+Z min: 0.2000, Z max: 19.6051, 갭: 19.4051
+```
+위와 같이 최종적으로 결과가 나옴
+### 분석
+먼저 535의 깊이들을 보면 신기하게도 뚜껑 부분은 깊이가 추출이 안됨. 투명한 부분은 잘 안된다는게 이런것 같음
+
+그리고 curr_next와 curr_prev의 E가 거의 같음. 아마도 손실함수에서 사용하는 min_pe_temporal = torch.minimum(pe_p2c, pe_n2c) 이 부분이 문제인것 같음 
+
+
 
 ---
 # 겪은 문제들
