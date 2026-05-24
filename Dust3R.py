@@ -62,8 +62,8 @@ class DepthHead(nn.Module):
         out = self.MLP(all_G) # [B, 1, 224, 224]
 
         disp_raw = torch.sigmoid(out) # 0 ~ 1
-        min_disp = 0.01 # 100
-        max_disp = 2.0 # 0.1
+        min_disp = 0.05 # 100
+        max_disp = 5.0 # 0.1
         
         # disp_raw가 0이면 0.01, 1이면 10.0
         # 0.1 ~ 10.0
@@ -89,12 +89,14 @@ class ProjectionHead(nn.Module):
         nn.init.zeros_(self.intrinsic_mlp[-1].bias)
 
         self.extrinsic_conv = nn.Sequential(
-            nn.Conv2d(d_model * 2, 256, kernel_size=3, padding=1),
+            nn.Conv2d(d_model * 3, 256, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
+
             nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
             nn.ReLU(inplace=True),
+
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
             nn.Linear(256, 6)
@@ -121,12 +123,15 @@ class ProjectionHead(nn.Module):
 
         intrinsic_raw = self.intrinsic_mlp(combined_mean)
 
-        f = torch.tanh(intrinsic_raw) * 100.0 + 200.0 # 100 ~ 300
-        fx, fy = f[:, 0], f[:, 1]
+        # f = torch.tanh(intrinsic_raw) * 50.0 + 160.0 # 100 ~ 300
+        # fx, fy = f[:, 0], f[:, 1]
+
+        fx = F.softplus(intrinsic_raw[:, 0]) + 150.0  # 최소 100 픽셀 보장
+        fy = F.softplus(intrinsic_raw[:, 1]) + 150.0
         
         K = torch.zeros((B, 3, 3), device=curr_F.device)
-        K[:, 0, 0] = fx
-        K[:, 1, 1] = fy
+        K[:, 0, 0] = 160
+        K[:, 1, 1] = 160
         K[:, 0, 2] = self.img_size / 2.0  # cx (정중앙 고정)
         K[:, 1, 2] = self.img_size / 2.0  # cy (정중앙 고정)
         K[:, 2, 2] = 1.0
@@ -138,16 +143,23 @@ class ProjectionHead(nn.Module):
 
         F1_spatial = F1.permute(0, 2, 1).view(B, -1, 14, 14)
         F2_spatial = F2.permute(0, 2, 1).view(B, -1, 14, 14)
+        Diff_spatial = F1_spatial - F2_spatial
 
-        combined = torch.cat([F1_spatial, F2_spatial], dim=1) # [B, d_model * 2, 14, 14]
+        combined = torch.cat([F1_spatial, F2_spatial, Diff_spatial], dim=1) # [B, d_model * 2, 14, 14]
         extrinsic_raw = self.extrinsic_conv(combined)
 
         # 3.14159랑 1.0을 기본으로 생각하기
         # 일단은 0.05와 0.1로 제약 주기
         # tanh를 빼봄
         # 360도를 돌 필요가 없으니 360 / 8정도로
-        axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 3.14159 / 8.0 # -3.14159 ~ 3.14159
-        translation = torch.tanh(extrinsic_raw[:, 3:]) * 0.1 # -0.1 ~ 0.1
+        axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 3.14159 / 12.0 # -3.14159 ~ 3.14159
+        translation = torch.tanh(extrinsic_raw[:, 3:]) * 0.05 # -0.1 ~ 0.1
+
+        # tx = torch.tanh(extrinsic_raw[:, 3:4]) * 0.1
+        # ty = torch.tanh(extrinsic_raw[:, 4:5]) * 0.1
+        # tz = torch.tanh(extrinsic_raw[:, 5:6]) * 0.05 # 핵심 안전벨트!
+        
+        # translation = torch.cat([tx, ty, tz], dim=-1)
         
         R = axis_angle_to_matrix(axis_angle) # [B, 3, 3]
         
@@ -269,6 +281,9 @@ class ImplicitDepthHead(nn.Module):
             nn.Linear(32, 1)
         )
 
+        nn.init.normal_(self.mlp[-1].weight, std=1e-5)
+        nn.init.zeros_(self.mlp[-1].bias)
+
         y, x = torch.meshgrid(
             torch.linspace(-1.0, 1.0, img_size),
             torch.linspace(-1.0, 1.0, img_size),
@@ -304,7 +319,7 @@ class ImplicitDepthHead(nn.Module):
         disp_raw = torch.sigmoid(out.transpose(1, 2).view(B, 1, 224, 224)) # [B, 1, 224, 224]
 
         min_disp = 0.01 # 100
-        max_disp = 2.0 # 0.1
+        max_disp = 10.0 # 0.1
         
         # disp_raw가 0이면 0.01, 1이면 10.0
         # 0.1 ~ 10.0
@@ -321,6 +336,8 @@ class Dust3R(nn.Module):
         super(Dust3R, self).__init__()
 
         self.CroCo_Encoder = CroCo()
+
+        self.positionalEncoding2D = PositionalEncoding2D(d_model=768, h_patches=14, w_patches=14)
         
         self.patch_embedded_dim = 768
 
@@ -331,11 +348,11 @@ class Dust3R(nn.Module):
             Decoder(d_model=self.patch_embedded_dim, h=12) for _ in range(self.decoder_layers)
         ])
 
-        # self.upsampler = FeatureUpsampler()
+        self.upsampler = FeatureUpsampler()
 
-        # self.depth_Head = DepthHead()
+        self.depth_Head = DepthHead()
 
-        self.implictDepthHead = ImplicitDepthHead()
+        # self.implictDepthHead = ImplicitDepthHead()
 
         H, W = 224, 224
         y, x = torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij')
@@ -359,6 +376,10 @@ class Dust3R(nn.Module):
         prev_G = prev_F[-1].clone()
         curr_G = curr_F[-1].clone()
         next_G = next_F[-1].clone()
+    
+        prev_G = self.positionalEncoding2D(prev_G)
+        curr_G = self.positionalEncoding2D(curr_G)
+        next_G = self.positionalEncoding2D(next_G)
 
         for decoder in self.decoders: # [B, 196, 768]
             tmp_curr = curr_G
@@ -370,19 +391,19 @@ class Dust3R(nn.Module):
             prev_G = decoder(prev_G, tmp_curr, E_CURR_PREV_INV)
             next_G = decoder(next_G, tmp_curr, E_CURR_NEXT_INV)
 
-        # PREV_G_224x224 = self.upsampler(prev_G, prev_F) # [B, 32, 224, 224]
-        # CURR_G_224x224 = self.upsampler(curr_G, curr_F) # [B, 32, 224, 224]
-        # NEXT_G_224x224 = self.upsampler(next_G, next_F) # [B, 32, 224, 224]
+        PREV_G_224x224 = self.upsampler(prev_G, prev_F) # [B, 32, 224, 224]
+        CURR_G_224x224 = self.upsampler(curr_G, curr_F) # [B, 32, 224, 224]
+        NEXT_G_224x224 = self.upsampler(next_G, next_F) # [B, 32, 224, 224]
 
-        # B, C, H, W = CURR_G_224x224.shape
+        B, C, H, W = CURR_G_224x224.shape
 
-        # PREV_Z, PREV_D = self.depth_Head(PREV_G_224x224) # [B, 1, 224, 224]
-        # CURR_Z, CURR_D = self.depth_Head(CURR_G_224x224) # [B, 1, 224, 224]
-        # NEXT_Z, NEXT_D = self.depth_Head(NEXT_G_224x224) # [B, 1, 224, 224]
+        PREV_Z, PREV_D = self.depth_Head(PREV_G_224x224) # [B, 1, 224, 224]
+        CURR_Z, CURR_D = self.depth_Head(CURR_G_224x224) # [B, 1, 224, 224]
+        NEXT_Z, NEXT_D = self.depth_Head(NEXT_G_224x224) # [B, 1, 224, 224]
 
-        PREV_Z, PREV_D = self.implictDepthHead(prev_G, prev_F[-1])
-        CURR_Z, CURR_D = self.implictDepthHead(curr_G, curr_F[-1])
-        NEXT_Z, NEXT_D = self.implictDepthHead(next_G, next_F[-1])
+        # PREV_Z, PREV_D = self.implictDepthHead(prev_G, prev_F[-1])
+        # CURR_Z, CURR_D = self.implictDepthHead(curr_G, curr_F[-1])
+        # NEXT_Z, NEXT_D = self.implictDepthHead(next_G, next_F[-1])
 
         PREV_XYZ = self.get_XYZ(B, PREV_Z, K)
         CURR_XYZ = self.get_XYZ(B, CURR_Z, K)

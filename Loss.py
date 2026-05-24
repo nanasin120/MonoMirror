@@ -74,8 +74,8 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
 
         # 이미지 색상이 변하면 깊이 평활화를 꺼버림 (exp(-색상변화))
         # 색상 변화가 클수록 가중치가 0에 가까워져서 Smooth Loss가 무시됨
-        weight_x = torch.exp(-img_dx * 50.0)
-        weight_y = torch.exp(-img_dy * 50.0)
+        weight_x = torch.exp(-img_dx * 30.0)
+        weight_y = torch.exp(-img_dy * 30.0)
 
         # 최종 Loss 계산
         smoothness_x = disp_dx * weight_x
@@ -190,7 +190,7 @@ class Minimum_Reprojection_Loss(nn.Module):
         # mask = (projected_pe < source_pe).float() # [B, 1, H, W]
         # mask = mask * bg_mask * valid_mask
 
-        min_pe = torch.minimum(projected_pe, source_pe)
+        min_pe = torch.minimum(projected_pe, source_pe) # auto masking
 
         weight_loss = min_pe * valid_mask * bg_mask # [B, 1, H, W]
         
@@ -228,6 +228,9 @@ class U3Frame_Loss(nn.Module): # 이전, 현재, 이후 를 이용한 재투영 
         # 광도 오차와 원본 오차를 합친 최종 오차 완성
         final_min_pe = torch.minimum(min_pe_temporal, min_pe_source)
 
+        # 원본간의 차이가 얼마 없기에 원본 오차는 제거
+        # final_min_pe = min_pe_temporal
+
         # 이전에 재투영 할떄 나온 mask 합치기
         valid_mask_any = mask_p2c.bool() | mask_n2c.bool()
 
@@ -236,8 +239,12 @@ class U3Frame_Loss(nn.Module): # 이전, 현재, 이후 를 이용한 재투영 
 
         # 최종 Loss = (광도 오차 + 원본 오차) * (재투영 mask + 배경 mask)
         loss = final_min_pe * total_mask
+        mean_loss = loss.sum() / (total_mask.sum() + 1e-8)
 
-        return loss.sum() / (total_mask.sum() + 1e-8)
+        valid_ratio = total_mask.sum() / total_mask.numel()
+        mask_penalty = torch.relu(0.5 - valid_ratio) * 10.0 # 50% 넘기면 손실
+
+        return mean_loss + mask_penalty
 
 class Smooth_Loss(nn.Module): # 깊이값을 부드럽게 만들어 주는 Loss
     def __init__(self):
@@ -265,8 +272,8 @@ class Smooth_Loss(nn.Module): # 깊이값을 부드럽게 만들어 주는 Loss
         # 가중치
         # 변화량이 작으면 무한대 -> 윤곽선이 없다면 가중치 커짐
         # 변화량이 크면 0에 가까워짐 -> 윤곽선이 있다면 가중치 작아짐
-        weights_x = torch.exp(-image_dx * 10.0)
-        weights_y = torch.exp(-image_dy * 10.0)
+        weights_x = torch.exp(-image_dx * 50.0)
+        weights_y = torch.exp(-image_dy * 50.0)
 
         mask_x = mask[:, :, :, :-1] * mask[:, :, :, 1:] # 가로로 인접한 두 칸이 모두 물체인 경우
         mask_y = mask[:, :, :-1, :] * mask[:, :, 1:, :] # 세로로 인접한 두 칸이 모두 물체인 경우

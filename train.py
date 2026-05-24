@@ -1,7 +1,7 @@
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
 from Dust3R import Dust3R
 from ImageDataset import ImageDataset
@@ -17,15 +17,15 @@ if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
 BATCH = 4
 START_EPOCH = 0
-END_EPOCH = 100
+END_EPOCH = 1000
 ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
-LEARNING_RATE = 1e-5
-IMAGE_SAVE_INTERVEL = 2
-WEIGHT_SAVE_INTERVEL = 100
+LEARNING_RATE = 5e-5 # 1e-4에서 좀 낮춤
+IMAGE_SAVE_INTERVEL = 5
+WEIGHT_SAVE_INTERVEL = 50
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-img_dir = r'cup'
-full_dataset = ImageDataset(img_dir=img_dir, frame_interval=20)
+img_dir = r'cup_dataset'
+full_dataset = ImageDataset(img_dir=img_dir, frame_interval=3)
 
 dataloader = DataLoader(
     dataset=full_dataset,
@@ -45,9 +45,16 @@ criterion_pointmap_loss = pointmap_Loss().to(DEVICE)
 criterion_disparity_loss = Disparity_Loss().to(DEVICE)
 criterion_u3frame_loss = U3Frame_Loss().to(DEVICE)
 
-
-optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
-scheduler = CosineAnnealingLR(optimizer, T_max=ADDITIONAL_EPOCH, eta_min=1e-6)
+optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
+scheduler = OneCycleLR(
+    optimizer,
+    max_lr=LEARNING_RATE,
+    steps_per_epoch=len(dataloader),
+    epochs=ADDITIONAL_EPOCH,
+    pct_start=0.1, # 10%동안 warm up
+    div_factor=25.0, # max_lr / 25로 시작
+    final_div_factor=1000.0 # 마지막 학습률은 0에 가깝게 
+)
 
 def train():
     print('TRAIN START')
@@ -57,7 +64,7 @@ def train():
         model.train()
         train_loss = 0.0
         train_smooth_loss = 0.0
-        train_3frame_loss = 0.0
+        train_reproj_loss = 0.0
         epoch_start_time = time.time()
 
         batch_start_time = time.time()
@@ -83,19 +90,23 @@ def train():
             projected_img_n2c, valid_mask_n2c = get_projected_image(curr_image, next_image, CURR_XYZ, NEXT_MATRIX)
 
             loss_3frame = criterion_u3frame_loss(prev_image, curr_image, next_image, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c)
+            #loss_reproj_1 = criterion_reprojection(curr_image, prev_image, projected_img_p2c, valid_mask_p2c)
+            #loss_reproj_2 = criterion_reprojection(curr_image, next_image, projected_img_n2c, valid_mask_n2c)
 
             loss_smoothloss_1 = criterion_edge_smooth(PREV_D, prev_image)
             loss_smoothloss_2 = criterion_edge_smooth(CURR_D, curr_image)
             loss_smoothloss_3 = criterion_edge_smooth(NEXT_D, next_image)
 
+            loss_reproj = loss_3frame
             loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2 + loss_smoothloss_3) / 3.0
 
-            total_loss = (loss_3frame * 1.0) + (loss_smoothloss * 0.001)
+            total_loss = (loss_reproj * 1.0) + (loss_smoothloss * 0.005)
 
             optimizer.zero_grad()
             total_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+            scheduler.step()
 
             if batch_idx % 10 == 0:
                 batch_end_time = time.time()
@@ -104,15 +115,14 @@ def train():
 
             train_loss += total_loss.item()
             train_smooth_loss += loss_smoothloss.item() * 0.001
-            train_3frame_loss += loss_3frame.item() * 1.0
-
+            train_reproj_loss += loss_reproj.item() * 1.0
 
         avg_train_loss = train_loss / len(dataloader)
         avg_train_smooth_loss = train_smooth_loss / len(dataloader)
-        avg_3frame_loss = train_3frame_loss / len(dataloader)
+        avg_reproj_loss = train_reproj_loss / len(dataloader)
 
         epoch_end_time = time.time()
-        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train 3Frame Loss : {avg_3frame_loss:.4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Time : {epoch_end_time-epoch_start_time:.4f}')
+        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_reproj_loss:.4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Time : {epoch_end_time-epoch_start_time:.4f}')
 
         if epoch % WEIGHT_SAVE_INTERVEL == 0:
             save_path = os.path.join(model_save_path, f'model_epoch_{epoch}.pth')
@@ -130,8 +140,6 @@ def train():
             torch.save(model.state_dict(), save_path)
 
             print(f'New Best Model Saved! Loss : {best_avg_loss:.4f}') 
-
-        scheduler.step()
 
 if __name__ == "__main__":
     train()

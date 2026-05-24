@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import open3d as o3d
 import torchvision.utils as vutils
 import os
+import numpy as np
 
 def save_fixed_sample(model, dataset, epoch, save_path, device):
     model.eval()
@@ -122,7 +123,7 @@ def visualize_points(X, image, z_scale=1.0):
     image = image.detach().cpu()
     colors = image.permute(1, 2, 0).reshape(-1, 3).numpy()
 
-    valid_mask = (0.1 < X[:, 2]) & (X[:, 2] < 2.0) # 깊이값 이상치 제거
+    valid_mask = (0.1 < X[:, 2]) & (X[:, 2] < 0.5) # 깊이값 이상치 제거
     
     X = X[valid_mask]
     colors = colors[valid_mask]
@@ -134,6 +135,40 @@ def visualize_points(X, image, z_scale=1.0):
     pcd.points = o3d.utility.Vector3dVector(X)
     pcd.colors = o3d.utility.Vector3dVector(colors)
 
+    o3d.visualization.draw_geometries([pcd])
+
+def visualize_points_(X, image, z_scale=1.0):
+    X = X.detach().cpu().numpy().reshape(-1, 3)
+    image = image.detach().cpu()
+    colors = image.permute(1, 2, 0).reshape(-1, 3).numpy()
+
+    # 1. 깊이 필터링
+    valid_mask = (0.1 < X[:, 2]) & (X[:, 2] < 1.0)
+    X = X[valid_mask]
+    colors = colors[valid_mask]
+    
+    # 2. 축 조정
+    X[:, 2] = X[:, 2] * z_scale
+    X[:, 1] = X[:, 1] * -1.0
+
+    # 3. [강제 평탄화] 가장 낮은 Z(사실상 깊이) 영역을 찾아 수평으로 맞춤
+    # 점군 중 y값이 가장 작은(바닥인) 점들의 평균을 잡아 수평 벡터로 삼음
+    bottom_points = X[X[:, 1] > np.percentile(X[:, 1], 90)] # 책상 바닥 샘플링
+    
+    # 책상의 기울기를 수동으로 보정 (0.1은 튜닝 가능)
+    # y축(높이)이 컵의 중심을 향하도록 강제 회전
+    angle = np.radians(-25) # 이 값을 조절하며 책상이 평평해지는 지점을 찾으세요!
+    R = np.array([
+        [1, 0, 0],
+        [0, np.cos(angle), -np.sin(angle)],
+        [0, np.sin(angle), np.cos(angle)]
+    ])
+    X = X @ R.T
+
+    # 4. 시각화
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(X)
+    pcd.colors = o3d.utility.Vector3dVector(colors)
     o3d.visualization.draw_geometries([pcd])
 
 def load_croco_weights_to_dust3r(model, checkpoint_path):
