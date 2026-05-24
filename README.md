@@ -3,6 +3,8 @@ Self-Supervised 3D Reconstruction from Monocular Vidio
 
 단일 카메라 영상에서 자기지도 학습을 통해 3D 포인트 클라우드와 기하학적 구조를 추출하는 딥러닝 파이프라인 (졸업 프로젝트로 진행할 예정)
 
+자기지도 학습을 하는 가장 큰 이유는 학습에 사용하는 컴퓨터가 개인용 게이밍 노트북이기 때문. 많은 데이터 이런건 학습 자체가 힘들어짐.
+
 ## Project Overview
 Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연속된 단일 카메라 비디오 만을 이용하여 3D 공간 복원
 
@@ -33,6 +35,33 @@ Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연�
 <img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/0fe4635a-4f0c-4699-bceb-30a36a073aa6" />
 <img width="1906" height="1105" alt="image" src="https://github.com/user-attachments/assets/f546e7a7-5127-4f06-bba7-bd9d7e31da10" />
 
+## 2026-05-24 1844 진행 상태
+아키텍처, 손실함수, 학습 방식 변화 발생
+### 아키텍처
+아키텍처의 경우 디코더에 PositionalEncoding2D 추가, K값 고정, Upsampling + DepthHead 다시 추가
+### 손실 함수
+모델이 자꾸 픽셀을 전부 밖으로 던져버리는 꼼수를 찾음 그래서
+```
+        valid_ratio = total_mask.sum() / total_mask.numel()
+        mask_penalty = torch.relu(0.5 - valid_ratio) * 10.0 # 50% 넘기면 손실
+
+        return mean_loss + mask_penalty
+```
+U3FrameLoss에 다음과 같은 손실을 넣어서 이미지를 재투영 할때 픽셀이 많이 밖으로 나가면 손실을 얻게 만듬
+### 학습
+에포크는 1000, LEARNING_RATE는 5e-5, schedular는 OneCycleLR로 변경
+<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/1a61e12f-4c0b-41ca-b9b8-58727707ef94" />
+<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/a03559c9-50c3-4a37-bba8-e6ba977deabb" />
+<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/8664e1b7-50ae-41a4-8e42-348a217f5c13" />
+<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/c3c34324-8351-415d-ad74-7317ed8e693e" />
+<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/bc85105b-6e88-44f1-b403-278073f4aadc" />
+<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/b876c14a-69a9-4481-b2b2-12b8c516efc1" />
+
+순서대로 0, 20, 40, 60, 80, 100. 100번에서 터진것처럼 보이지만
+
+<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/81def350-3c84-4ae8-81cd-9fda4d92d9cd" />
+
+140에서 다시 돌아오기 시작. 그래서 현재는 계속 학습 진행중
 
 ---
 # 겪은 문제들
