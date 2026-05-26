@@ -2,6 +2,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class Mask_Loss(nn.Module):
+    def __init__(self):
+        super(Mask_Loss, self).__init__()
+
+    def forward(self, valid_mask_p2c, valid_mask_n2c):
+        valid_mask_any = valid_mask_p2c.bool() | valid_mask_n2c.bool()
+
+        valid_ratio = valid_mask_any.sum() / valid_mask_any.numel()
+
+        mask_penalty = torch.relu(0.85 - valid_ratio) * 10.0
+
+        return mask_penalty
+
 class Disparity_3Frame_Loss(nn.Module):
     def __init__(self):
         super(Disparity_3Frame_Loss, self).__init__()
@@ -190,9 +203,9 @@ class Minimum_Reprojection_Loss(nn.Module):
         # mask = (projected_pe < source_pe).float() # [B, 1, H, W]
         # mask = mask * bg_mask * valid_mask
 
-        min_pe = torch.minimum(projected_pe, source_pe) # auto masking
+        # min_pe = torch.minimum(projected_pe, source_pe) # auto masking
 
-        weight_loss = min_pe * valid_mask * bg_mask # [B, 1, H, W]
+        weight_loss = projected_pe * valid_mask * bg_mask # [B, 1, H, W]
         
         return weight_loss.sum() / ((valid_mask * bg_mask).sum() + 1e-8)
 
@@ -285,3 +298,25 @@ class Smooth_Loss(nn.Module): # 깊이값을 부드럽게 만들어 주는 Loss
         smoothness_y = (X_dy * weights_y) * mask_y
         
         return (smoothness_x.sum() + smoothness_y.sum()) / (mask_x.sum() + mask_y.sum() + 1e-8)
+    
+class Feature_Reprojection_Loss(nn.Module):
+    def __init__(self):
+        super(Feature_Reprojection_Loss, self).__init__()
+
+    def forward(self, target_feat, projected_feat, valid_mask):
+        cos_sim = F.cosine_similarity(target_feat, projected_feat, dim=1).unsqueeze(1)
+
+        loss_feat = (1.0 - cos_sim) * valid_mask
+
+        return loss_feat.sum() / (valid_mask.sum() + 1e-8)
+
+
+
+
+
+
+
+
+
+
+

@@ -153,7 +153,8 @@ class ProjectionHead(nn.Module):
         # tanh를 빼봄
         # 360도를 돌 필요가 없으니 360 / 8정도로
         axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 3.14159 / 12.0 # -3.14159 ~ 3.14159
-        translation = torch.tanh(extrinsic_raw[:, 3:]) * 0.05 # -0.1 ~ 0.1
+        translation = F.normalize(extrinsic_raw[:, 3:], p=2, dim=-1) * 0.1
+        # translation = torch.tanh(extrinsic_raw[:, 3:]) * 0.1 # -0.1 ~ 0.1
 
         # tx = torch.tanh(extrinsic_raw[:, 3:4]) * 0.1
         # ty = torch.tanh(extrinsic_raw[:, 4:5]) * 0.1
@@ -331,9 +332,9 @@ class ImplicitDepthHead(nn.Module):
 
         return Z_coord_safe, scaled_disp
 
-class Dust3R(nn.Module):
+class MonoMirror_v1(nn.Module):
     def __init__(self):
-        super(Dust3R, self).__init__()
+        super(MonoMirror_v1, self).__init__()
 
         self.CroCo_Encoder = CroCo()
 

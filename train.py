@@ -3,10 +3,10 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
-from Dust3R import Dust3R
+from MonoMirror_v1 import MonoMirror_v1
 from ImageDataset import ImageDataset
 from defs import get_projected_image, load_croco_weights_to_dust3r, save_fixed_sample, get_projected_points
-from Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss, pointmap_Loss, Disparity_Loss, U3Frame_Loss
+from Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss, pointmap_Loss, Disparity_Loss, U3Frame_Loss, Mask_Loss, Feature_Reprojection_Loss
 import os
 import time
 
@@ -15,7 +15,7 @@ if not os.path.exists(model_save_path): os.makedirs(model_save_path)
 img_save_path = r'./image_save'
 if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
-BATCH = 4
+BATCH = 2
 START_EPOCH = 0
 END_EPOCH = 1000
 ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
@@ -25,7 +25,8 @@ WEIGHT_SAVE_INTERVEL = 50
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 img_dir = r'cup_dataset'
-full_dataset = ImageDataset(img_dir=img_dir, frame_interval=3)
+feat_dir = r'dino_features'
+full_dataset = ImageDataset(img_dir=img_dir, feat_dir=feat_dir, frame_interval=3)
 
 dataloader = DataLoader(
     dataset=full_dataset,
@@ -34,7 +35,7 @@ dataloader = DataLoader(
     pin_memory=True
 )
 
-model = Dust3R().to(DEVICE)
+model = MonoMirror_v1().to(DEVICE)
 # model.load_state_dict(torch.load(r'model_save\best_model_epoch.pth', weights_only=True))
 load_croco_weights_to_dust3r(model, r'croco_epoch_150.pth')
 
@@ -44,6 +45,8 @@ criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
 criterion_pointmap_loss = pointmap_Loss().to(DEVICE)
 criterion_disparity_loss = Disparity_Loss().to(DEVICE)
 criterion_u3frame_loss = U3Frame_Loss().to(DEVICE)
+criterion_mask_loss = Mask_Loss().to(DEVICE)
+criterion_feature_reprojection = Feature_Reprojection_Loss().to(DEVICE)
 
 optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
 scheduler = OneCycleLR(
@@ -65,15 +68,24 @@ def train():
         train_loss = 0.0
         train_smooth_loss = 0.0
         train_reproj_loss = 0.0
+        train_mask_loss = 0.0
         epoch_start_time = time.time()
 
         batch_start_time = time.time()
         for batch_idx, batch in enumerate(dataloader):
-            prev_image = batch['prev_image'].to(DEVICE)
-            curr_image = batch['curr_image'].to(DEVICE)
-            next_image = batch['next_image'].to(DEVICE)
+            prev_image_vis = batch['prev_image_vis'].to(DEVICE)
+            curr_image_vis = batch['curr_image_vis'].to(DEVICE)
+            next_image_vis = batch['next_image_vis'].to(DEVICE)
 
-            OUTPUTS = model(prev_image, curr_image, next_image)
+            prev_image_model = batch['prev_image_model'].to(DEVICE)
+            curr_image_model = batch['curr_image_model'].to(DEVICE)
+            next_image_model = batch['next_image_model'].to(DEVICE)
+
+            prev_feature = batch['prev_feature'].to(DEVICE)
+            curr_feature = batch['curr_feature'].to(DEVICE)
+            next_feature = batch['next_feature'].to(DEVICE)
+
+            OUTPUTS = model(prev_image_model, curr_image_model, next_image_model)
 
             XYZ = OUTPUTS['XYZ']
             D = OUTPUTS['D']
@@ -85,22 +97,27 @@ def train():
             PREV_MATRIX, NEXT_MATRIX = MATRIX[0], MATRIX[1]
             PREV_MATRIX_INV, NEXT_MATRIX_INV = MATRIX_INV[0], MATRIX_INV[1]
 
-            projected_img_p2c, valid_mask_p2c = get_projected_image(curr_image, prev_image, CURR_XYZ, PREV_MATRIX)
+            projected_img_p2c, valid_mask_p2c = get_projected_image(curr_feature, prev_feature, CURR_XYZ, PREV_MATRIX)
+            projected_img_n2c, valid_mask_n2c = get_projected_image(curr_feature, next_feature, CURR_XYZ, NEXT_MATRIX)
 
-            projected_img_n2c, valid_mask_n2c = get_projected_image(curr_image, next_image, CURR_XYZ, NEXT_MATRIX)
+            # loss_3frame = criterion_u3frame_loss(prev_image, curr_image, next_image, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c)
 
-            loss_3frame = criterion_u3frame_loss(prev_image, curr_image, next_image, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c)
-            #loss_reproj_1 = criterion_reprojection(curr_image, prev_image, projected_img_p2c, valid_mask_p2c)
-            #loss_reproj_2 = criterion_reprojection(curr_image, next_image, projected_img_n2c, valid_mask_n2c)
+            # loss_reproj_1 = criterion_reprojection(curr_feature, prev_feature, projected_img_p2c, valid_mask_p2c)
+            # loss_reproj_2 = criterion_reprojection(curr_feature, next_feature, projected_img_n2c, valid_mask_n2c)
 
-            loss_smoothloss_1 = criterion_edge_smooth(PREV_D, prev_image)
-            loss_smoothloss_2 = criterion_edge_smooth(CURR_D, curr_image)
-            loss_smoothloss_3 = criterion_edge_smooth(NEXT_D, next_image)
+            loss_reproj_1 = criterion_feature_reprojection(curr_feature, projected_img_p2c, valid_mask_p2c)
+            loss_reproj_2 = criterion_feature_reprojection(curr_feature, projected_img_n2c, valid_mask_n2c)
 
-            loss_reproj = loss_3frame
+            loss_mask = criterion_mask_loss(valid_mask_p2c, valid_mask_n2c)
+
+            loss_smoothloss_1 = criterion_edge_smooth(PREV_D, prev_image_vis)
+            loss_smoothloss_2 = criterion_edge_smooth(CURR_D, curr_image_vis)
+            loss_smoothloss_3 = criterion_edge_smooth(NEXT_D, next_image_vis)
+
+            loss_reproj = (loss_reproj_1 + loss_reproj_2) / 2.0
             loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2 + loss_smoothloss_3) / 3.0
 
-            total_loss = (loss_reproj * 1.0) + (loss_smoothloss * 0.005)
+            total_loss = (loss_reproj * 1.0) + (loss_smoothloss * 0.005) + loss_mask
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -116,13 +133,15 @@ def train():
             train_loss += total_loss.item()
             train_smooth_loss += loss_smoothloss.item() * 0.001
             train_reproj_loss += loss_reproj.item() * 1.0
+            train_mask_loss += loss_mask.item()
 
         avg_train_loss = train_loss / len(dataloader)
         avg_train_smooth_loss = train_smooth_loss / len(dataloader)
         avg_reproj_loss = train_reproj_loss / len(dataloader)
+        avg_mask_loss = train_mask_loss / len(dataloader)
 
         epoch_end_time = time.time()
-        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_reproj_loss:.4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Time : {epoch_end_time-epoch_start_time:.4f}')
+        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_reproj_loss:.4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Mask Loss : {avg_mask_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
 
         if epoch % WEIGHT_SAVE_INTERVEL == 0:
             save_path = os.path.join(model_save_path, f'model_epoch_{epoch}.pth')

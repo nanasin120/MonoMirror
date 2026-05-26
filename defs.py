@@ -10,12 +10,17 @@ def save_fixed_sample(model, dataset, epoch, save_path, device):
     with torch.no_grad():
         # 고정된 첫 번째 데이터 가져오기
         sample = dataset[0]
-        prev_image = sample['prev_image'].unsqueeze(0).to(device)# [1, 3, 224, 224]
-        curr_image = sample['curr_image'].unsqueeze(0).to(device)
-        next_image = sample['next_image'].unsqueeze(0).to(device)
+
+        prev_image_vis = sample['prev_image_vis'].unsqueeze(0).to(device)
+        curr_image_vis = sample['curr_image_vis'].unsqueeze(0).to(device)
+        next_image_vis = sample['next_image_vis'].unsqueeze(0).to(device)
+
+        prev_image_model = sample['prev_image_model'].unsqueeze(0).to(device)
+        curr_image_model = sample['curr_image_model'].unsqueeze(0).to(device)
+        next_image_model = sample['next_image_model'].unsqueeze(0).to(device)
 
         # 모델 추론
-        OUTPUTS = model(prev_image, curr_image, next_image, True)
+        OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, True)
         
         XYZ = OUTPUTS['XYZ']
         D = OUTPUTS['D']
@@ -28,19 +33,19 @@ def save_fixed_sample(model, dataset, epoch, save_path, device):
         PREV_MATRIX_INV, NEXT_MATRIX_INV = MATRIX_INV[0], MATRIX_INV[1]
 
         # 재투영 이미지 생성
-        projected_img_p2c, _ = get_projected_image(curr_image, prev_image, CURR_XYZ, PREV_MATRIX)
-        projected_img_n2c, _ = get_projected_image(curr_image, next_image, CURR_XYZ, NEXT_MATRIX)
+        projected_img_p2c, _ = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
+        projected_img_n2c, _ = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
 
         depth_resized_p = PREV_D.view(1, 1, 224, 224) # [1, 1, 14, 14]로 변환
         depth_resized_n = NEXT_D.view(1, 1, 224, 224) # [1, 1, 14, 14]로 변환
 
-        viz_d_prev = get_depth_viz(PREV_D, prev_image)
-        viz_d_curr = get_depth_viz(CURR_D, curr_image)
-        viz_d_next = get_depth_viz(NEXT_D, next_image)
+        viz_d_prev = get_depth_viz(PREV_D, prev_image_vis)
+        viz_d_curr = get_depth_viz(CURR_D, curr_image_vis)
+        viz_d_next = get_depth_viz(NEXT_D, next_image_vis)
 
-        row1 = torch.cat([prev_image[0], curr_image[0], next_image[0]], dim=2) 
+        row1 = torch.cat([prev_image_vis[0], curr_image_vis[0], next_image_vis[0]], dim=2) 
         row2 = torch.cat([viz_d_prev[0], viz_d_curr[0], viz_d_next[0]], dim=2)
-        row3 = torch.cat([projected_img_p2c[0], curr_image[0], projected_img_n2c[0]], dim=2)
+        row3 = torch.cat([projected_img_p2c[0], curr_image_vis[0], projected_img_n2c[0]], dim=2)
 
         combined = torch.cat([row1, row2, row3], dim=1)
         
@@ -93,7 +98,6 @@ def get_projected_points(X, MATRIX):
     projected_points = torch.matmul(X_homo, MATRIX.transpose(1, 2)) # [B, H * W, 4]
     return projected_points
 
-
 def get_projected_image(img1, img2, X, MATRIX):
     B, _, H, W = img1.shape
     projected_points = get_projected_points(X, MATRIX)
@@ -123,7 +127,7 @@ def visualize_points(X, image, z_scale=1.0):
     image = image.detach().cpu()
     colors = image.permute(1, 2, 0).reshape(-1, 3).numpy()
 
-    valid_mask = (0.1 < X[:, 2]) & (X[:, 2] < 0.5) # 깊이값 이상치 제거
+    valid_mask = (0.1 < X[:, 2]) & (X[:, 2] < 1.0) # 깊이값 이상치 제거
     
     X = X[valid_mask]
     colors = colors[valid_mask]
