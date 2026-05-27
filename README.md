@@ -5,6 +5,18 @@ Self-Supervised 3D Reconstruction from Monocular Vidio
 
 자기지도 학습을 하는 가장 큰 이유는 학습에 사용하는 컴퓨터가 개인용 게이밍 노트북이기 때문. 많은 데이터 이런건 학습 자체가 힘들어짐.
 
+## Environment & Hardware
+
+본 프로젝트는 다음 사양의 로컬 환경에서 개발 및 테스트되었습니다.
+
+| Component | Specification |
+| :--- | :--- |
+| **Laptop Model** | MSI Alpha 17 C7VG |
+| **GPU** | NVIDIA GeForce RTX 4070 Laptop (8GB VRAM) |
+| **CUDA** | 13.1 |
+| **Driver** | 591.74 |
+| **OS** | Windows 11 |
+
 ## Project Overview
 Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연속된 단일 카메라 비디오 만을 이용하여 3D 공간 복원
 
