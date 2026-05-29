@@ -268,6 +268,27 @@ Z min: 0.2095, Z max: 19.7635, 갭: 19.5540
 
 망했음. 보면 RGB Loss가 낮음. 거의 smooth loss와 동급, 그 이상. 저렇게 뭉게뭉게 되는 이유가 어디에 있는지를 모르겠음.
 
+## 2026-05-30 0150 진행상태
+
+```
+if epoch < 50:
+                weight_reproj = 1.0
+                weight_rgb = 0.0
+                weight_smooth = 0.1
+            else:
+                weight_reproj = 1.0
+                weight_rgb = 1.0
+                weight_smooth = 0.05
+
+            total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + loss_mask
+```
+
+위처럼 바꿨음. 처음에는 rgb loss를 안줘서 카메라를 잡게 하기 위해
+
+<img width="672" height="672" alt="ezgif com-animated-gif-maker (1)" src="https://github.com/user-attachments/assets/027e2ff7-640c-4c4e-b012-628f432307d1" />
+
+또다시 망했음. 총 315번을 돌렸는데도.
+
 ---
 # 겪은 문제들
 ## 1. translation 학습 안됨
