@@ -20,7 +20,7 @@ Self-Supervised 3D Reconstruction from Monocular Vidio
 ## Project Overview
 Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연속된 단일 카메라 비디오 만을 이용하여 3D 공간 복원
 
-## Architecture & Pipeline
+## Architecture & Pipeline [IMAGE](architexture.md)
 - Backbone Network: DUSt3R
 - Encoder: CroCo (self made, Pre-trained Weights with same Monocular Video)
 - Input Structure: 3-Frame Architecture (Prev, Curr, Next)
