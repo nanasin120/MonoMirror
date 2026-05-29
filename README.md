@@ -227,6 +227,47 @@ Z min: 0.2054, Z max: 19.6121, 갭: 19.4067
 
 망함. 여러 생각이 듬. 손실함수를 고칠까? 특징 재투영이 잘못되었나? 14x14 패치 자체가 너무 큰 패치 단위인간가? 업샘플링에서 문제가 있는건가?
 
+## 2026-05-30 0019 진행상태
+RGB Loss를 추가해봄
+
+```
+proj_img_prev, mask_img_prev = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
+proj_img_next, mask_img_next = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
+loss_rgb_prev = torch.abs((curr_image_vis - proj_img_prev) * mask_img_prev).mean()
+loss_rgb_next = torch.abs((curr_image_vis - proj_img_next) * mask_img_next).mean()
+loss_rgb_reproj = (loss_rgb_prev + loss_rgb_next) / 2.0
+
+total_loss = (loss_reproj * 1.0) + (loss_rgb_reproj * 1.5) + (loss_smoothloss * 0.05) + loss_mask
+```
+
+위처럼 간단하게 만듬. 가중치는 위처럼 줬음
+
+<img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/7a9d42ab-c4ab-4978-94af-8d31314a41c2" />
+
+```
+==> Epoch 170 완료 Train Loss : 0.4547 Train Reproj Loss : 0.3480 Train RGB Loss : 0.070115 Train Smooth Loss : 0.0318 Train Mask Loss : 0.000000 Time : 10.3403
+--- [Fixed Sample Monitoring] ---
+True fx: 160.00, True fy: 160.00
+K : 
+tensor([[[160.,   0., 112.],
+         [  0., 160., 112.],
+         [  0.,   0.,   1.]]], device='cuda:0')
+E_CURR_PREV : 
+tensor([[[ 0.9998, -0.0168,  0.0105, -0.0292],
+         [ 0.0191,  0.9566, -0.2909,  0.1460],
+         [-0.0051,  0.2910,  0.9567,  0.0682],
+         [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+E_CURR_NEXT : 
+tensor([[[ 0.9964,  0.0052,  0.0846, -0.0391],
+         [ 0.0178,  0.9630, -0.2690,  0.1512],
+         [-0.0829,  0.2695,  0.9594,  0.0208],
+         [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+Z min: 0.2095, Z max: 19.7635, 갭: 19.5540
+---------------------------------
+```
+
+망했음. 보면 RGB Loss가 낮음. 거의 smooth loss와 동급, 그 이상. 저렇게 뭉게뭉게 되는 이유가 어디에 있는지를 모르겠음.
+
 ---
 # 겪은 문제들
 ## 1. translation 학습 안됨
