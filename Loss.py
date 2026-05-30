@@ -303,12 +303,45 @@ class Feature_Reprojection_Loss(nn.Module): # 재투영한 특징값 Loss
     def __init__(self):
         super(Feature_Reprojection_Loss, self).__init__()
 
-    def forward(self, target_feat, projected_feat, valid_mask):
-        cos_sim = F.cosine_similarity(target_feat, projected_feat, dim=1).unsqueeze(1)
+    def forward(self, curr_feature, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c):
+        cos_sim_p = F.cosine_similarity(curr_feature, projected_img_p2c, dim=1).unsqueeze(1)
+        cos_sim_n = F.cosine_similarity(curr_feature, projected_img_n2c, dim=1).unsqueeze(1)
+        
+        feat_loss_p = 1.0 - cos_sim_p
+        feat_loss_n = 1.0 - cos_sim_n
+        
+        # 마스크 밖의 픽셀은 오차를 무한대(9999)로 설정하여 선택되지 않게 함
+        feat_loss_p[~valid_mask_p2c.bool()] = 9999.0
+        feat_loss_n[~valid_mask_n2c.bool()] = 9999.0
+        
+        # 가려진 부분(Occlusion) 자동 무시
+        min_feat_loss = torch.minimum(feat_loss_p, feat_loss_n)
+        
+        # 합집합 마스크 생성 후 최종 평균 산출
+        valid_mask_feat_any = (valid_mask_p2c.bool() | valid_mask_n2c.bool()).float()
+        loss_reproj = (min_feat_loss * valid_mask_feat_any).sum() / (valid_mask_feat_any.sum() + 1e-8)
 
-        loss_feat = (1.0 - cos_sim) * valid_mask
+        return loss_reproj
 
-        return loss_feat.sum() / (valid_mask.sum() + 1e-8)
+class RGB_Reprojection_Loss(nn.Module): # 재투영한 특징값 Loss
+    def __init__(self):
+        super(RGB_Reprojection_Loss, self).__init__()
+        self.pe = photometric_error()
+
+    def forward(self, curr_image_vis, proj_img_prev, mask_img_prev, proj_img_next, mask_img_next):
+        # [B, 3, H, W] -> 3채널 오차의 평균을 내어 [B, 1, H, W]로 변환 (아직 공간 H, W 평균은 내면 안 됨!)
+        rgb_loss_p = self.pe(curr_image_vis, proj_img_prev)
+        rgb_loss_n = self.pe(curr_image_vis, proj_img_next)
+        
+        rgb_loss_p[~mask_img_prev.bool()] = 9999.0
+        rgb_loss_n[~mask_img_next.bool()] = 9999.0
+        
+        min_rgb_loss = torch.minimum(rgb_loss_p, rgb_loss_n)
+        
+        valid_mask_rgb_any = (mask_img_prev.bool() | mask_img_next.bool()).float()
+        loss_rgb_reproj = (min_rgb_loss * valid_mask_rgb_any).sum() / (valid_mask_rgb_any.sum() + 1e-8)
+        
+        return loss_rgb_reproj
 
 
 

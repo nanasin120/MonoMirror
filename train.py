@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from MonoMirror_v1 import MonoMirror_v1
 from ImageDataset import ImageDataset
 from defs import get_projected_image, load_croco_weights_to_dust3r, save_fixed_sample, get_projected_points
-from Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss, pointmap_Loss, Disparity_Loss, U3Frame_Loss, Mask_Loss, Feature_Reprojection_Loss
+from Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss, pointmap_Loss, Disparity_Loss, U3Frame_Loss, Mask_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss
 import os
 import time
 
@@ -47,6 +47,7 @@ criterion_disparity_loss = Disparity_Loss().to(DEVICE)
 criterion_u3frame_loss = U3Frame_Loss().to(DEVICE)
 criterion_mask_loss = Mask_Loss().to(DEVICE)
 criterion_feature_reprojection = Feature_Reprojection_Loss().to(DEVICE)
+criterion_rgb_reprojection = RGB_Reprojection_Loss().to(DEVICE)
 
 optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
 scheduler = OneCycleLR(
@@ -106,8 +107,10 @@ def train():
             # loss_reproj_1 = criterion_reprojection(curr_feature, prev_feature, projected_img_p2c, valid_mask_p2c)
             # loss_reproj_2 = criterion_reprojection(curr_feature, next_feature, projected_img_n2c, valid_mask_n2c)
 
-            loss_reproj_1 = criterion_feature_reprojection(curr_feature, projected_img_p2c, valid_mask_p2c)
-            loss_reproj_2 = criterion_feature_reprojection(curr_feature, projected_img_n2c, valid_mask_n2c)
+            # loss_reproj_1 = criterion_feature_reprojection(curr_feature, projected_img_p2c, valid_mask_p2c)
+            # loss_reproj_2 = criterion_feature_reprojection(curr_feature, projected_img_n2c, valid_mask_n2c)
+
+            loss_reproj = criterion_feature_reprojection(curr_feature, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c)
 
             loss_mask = criterion_mask_loss(valid_mask_p2c, valid_mask_n2c)
 
@@ -118,22 +121,22 @@ def train():
             # --- rgb loss ---
             proj_img_prev, mask_img_prev = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
             proj_img_next, mask_img_next = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
-            loss_rgb_prev = torch.abs((curr_image_vis - proj_img_prev) * mask_img_prev).mean()
-            loss_rgb_next = torch.abs((curr_image_vis - proj_img_next) * mask_img_next).mean()
-            loss_rgb_reproj = (loss_rgb_prev + loss_rgb_next) / 2.0
+            loss_rgb_reproj = criterion_rgb_reprojection(curr_image_vis, proj_img_prev, mask_img_prev, proj_img_next, mask_img_next)
             # --- ---
 
-            loss_reproj = (loss_reproj_1 + loss_reproj_2) / 2.0
+            # loss_reproj = (loss_reproj_1 + loss_reproj_2) / 2.0
             loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2 + loss_smoothloss_3) / 3.0
 
-            if epoch < 50:
-                weight_reproj = 1.0
-                weight_rgb = 0.0
-                weight_smooth = 0.1
-            else:
-                weight_reproj = 1.0
-                weight_rgb = 0.5
-                weight_smooth = 0.1
+            weight_reproj = 1.0
+            weight_rgb = 1.0
+            weight_smooth = 0.1
+            
+            # if epoch < 50:
+            #     weight_rgb = 0.0
+            # elif epoch < 100:
+            #     weight_rgb = 0.5 * ((epoch - 50) / 50.0)
+            # else:
+            #     weight_rgb = 0.5
 
             total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + loss_mask
 

@@ -115,23 +115,23 @@ class ProjectionHead(nn.Module):
     def predict_K(self, prev_F, curr_F, next_F):
         B = curr_F.shape[0]
 
-        # prev_F_mean = prev_F.mean(dim=1)
-        # curr_F_mean = curr_F.mean(dim=1)
-        # next_F_mean = next_F.mean(dim=1)
+        prev_F_mean = prev_F.mean(dim=1)
+        curr_F_mean = curr_F.mean(dim=1)
+        next_F_mean = next_F.mean(dim=1)
 
-        # combined_mean = (prev_F_mean + curr_F_mean + next_F_mean) / 3.0
+        combined_mean = (prev_F_mean + curr_F_mean + next_F_mean) / 3.0
 
-        # intrinsic_raw = self.intrinsic_mlp(combined_mean)
+        intrinsic_raw = self.intrinsic_mlp(combined_mean)
 
-        # # f = torch.tanh(intrinsic_raw) * 50.0 + 160.0 # 100 ~ 300
-        # # fx, fy = f[:, 0], f[:, 1]
+        # f = torch.tanh(intrinsic_raw) * 50.0 + 160.0 # 100 ~ 300
+        # fx, fy = f[:, 0], f[:, 1]
 
-        # fx = F.softplus(intrinsic_raw[:, 0]) + 150.0  # 최소 100 픽셀 보장
-        # fy = F.softplus(intrinsic_raw[:, 1]) + 150.0
+        fx = F.softplus(intrinsic_raw[:, 0]) + 150.0  # 최소 100 픽셀 보장
+        fy = F.softplus(intrinsic_raw[:, 1]) + 150.0
         
         K = torch.zeros((B, 3, 3), device=curr_F.device)
-        K[:, 0, 0] = 160
-        K[:, 1, 1] = 160
+        K[:, 0, 0] = fx
+        K[:, 1, 1] = fy
         K[:, 0, 2] = self.img_size / 2.0  # cx (정중앙 고정)
         K[:, 1, 2] = self.img_size / 2.0  # cy (정중앙 고정)
         K[:, 2, 2] = 1.0
@@ -154,13 +154,24 @@ class ProjectionHead(nn.Module):
         # 360도를 돌 필요가 없으니 360 / 8정도로
         axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 3.14159 / 6.0 # -3.14159 ~ 3.14159
         # translation = F.normalize(extrinsic_raw[:, 3:], p=2, dim=-1) * 0.1
-        translation = torch.tanh(extrinsic_raw[:, 3:]) * 0.3 # -0.1 ~ 0.1
+        # translation = torch.tanh(extrinsic_raw[:, 3:]) * 1.5 + 0.5 # -0.1 ~ 0.1
 
         # tx = torch.tanh(extrinsic_raw[:, 3:4]) * 0.1
         # ty = torch.tanh(extrinsic_raw[:, 4:5]) * 0.1
         # tz = torch.tanh(extrinsic_raw[:, 5:6]) * 0.05 # 핵심 안전벨트!
         
         # translation = torch.cat([tx, ty, tz], dim=-1)
+
+        translation_dir = F.normalize(extrinsic_raw[:, 3:6], p=2, dim=-1)
+        
+        # 2. 이동 크기(Magnitude) 추출
+        magnitude_raw = torch.norm(extrinsic_raw[:, 3:6], dim=-1, keepdim=True)
+        
+        # 3. 크기 하한선(0.05) 및 상한선(0.55) 적용 (다이내믹 레인지 확보)
+        magnitude = torch.sigmoid(magnitude_raw) * 0.5 + 0.05
+        
+        # 4. 최종 이동 벡터 (방향 * 크기)
+        translation = translation_dir * magnitude
         
         R = axis_angle_to_matrix(axis_angle) # [B, 3, 3]
         
