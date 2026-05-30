@@ -163,6 +163,131 @@ Z min: 0.2000, Z max: 19.9945, 갭: 19.7945
 
 아직 학습은 못돌림. 금요일이 되어야 돌릴수있음. 그 전까지는 계속 추가해보거나 그런쪽으로 가야할것같음.
 
+## 2026-05-29-2200 진행상태
+Feature를 이용한 재투영으로 아키텍처를 바꾼 이후 첫 학습, 180번 돌린 상태
+<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/34ad43d2-bae7-4d9d-992e-ef281116a10a" />
+
+```
+==> Epoch 180 완료 Train Loss : 0.3696 Train Reproj Loss : 0.3453 Train Smooth Loss : 0.0000 Train Mask Loss : 0.024071 Time : 9.8055
+--- [Fixed Sample Monitoring] ---
+True fx: 160.00, True fy: 160.00
+K : 
+tensor([[[160.,   0., 112.],
+         [  0., 160., 112.],
+         [  0.,   0.,   1.]]], device='cuda:0')
+E_CURR_PREV : 
+tensor([[[ 9.9945e-01,  3.1494e-02,  1.0221e-02, -3.4999e-02],
+         [-3.1207e-02,  9.9914e-01, -2.7139e-02,  1.4630e-04],
+         [-1.1067e-02,  2.6805e-02,  9.9958e-01,  9.7490e-02],
+         [ 0.0000e+00,  0.0000e+00,  0.0000e+00,  1.0000e+00]]],
+       device='cuda:0')
+E_CURR_NEXT : 
+tensor([[[ 0.9944,  0.0874,  0.0592, -0.0109],
+         [-0.0782,  0.9866, -0.1432,  0.0929],
+         [-0.0709,  0.1377,  0.9879,  0.0060],
+         [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+Z min: 0.2075, Z max: 19.9990, 갭: 19.7915
+```
+간지는 나지만 망함. 뭔 안개낀거같음
+```
+            total_loss = (loss_reproj * 1.0) + (loss_smoothloss * 0.005) + loss_mask
+```
+여기에서 smoothloss를 더 높이면 좋을 거 같음. E나 Z에서는 딱히 이상한점이 없는 거 같음.
+
+## 2026-05-29 2040 진행상태
+```
+total_loss = (loss_reproj * 1.0) + (loss_smoothloss * 0.05) + loss_mask
+```
+
+smoothloss를 0.05로 올려서 진행해봄
+
+<img width="672" height="672" alt="image" src="https://github.com/user-attachments/assets/ef3946db-df2c-4f85-9ab1-abae06310c02" />
+
+```
+==> Epoch 105 완료 Train Loss : 0.3722 Train Reproj Loss : 0.3572 Train Smooth Loss : 0.0333 Train Mask Loss : 0.013255 Time : 10.4583
+--- [Fixed Sample Monitoring] ---
+True fx: 160.00, True fy: 160.00
+K : 
+tensor([[[160.,   0., 112.],
+         [  0., 160., 112.],
+         [  0.,   0.,   1.]]], device='cuda:0')
+E_CURR_PREV : 
+tensor([[[ 0.9979, -0.0056,  0.0642, -0.0711],
+         [ 0.0097,  0.9979, -0.0634,  0.0229],
+         [-0.0637,  0.0639,  0.9959,  0.0652],
+         [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+E_CURR_NEXT : 
+tensor([[[ 0.9953,  0.0535,  0.0809, -0.0309],
+         [-0.0434,  0.9916, -0.1216,  0.0827],
+         [-0.0867,  0.1175,  0.9893, -0.0104],
+         [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+Z min: 0.2054, Z max: 19.6121, 갭: 19.4067
+---------------------------------
+```
+
+망함. 여러 생각이 듬. 손실함수를 고칠까? 특징 재투영이 잘못되었나? 14x14 패치 자체가 너무 큰 패치 단위인간가? 업샘플링에서 문제가 있는건가?
+
+## 2026-05-30 0019 진행상태
+RGB Loss를 추가해봄
+
+```
+proj_img_prev, mask_img_prev = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
+proj_img_next, mask_img_next = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
+loss_rgb_prev = torch.abs((curr_image_vis - proj_img_prev) * mask_img_prev).mean()
+loss_rgb_next = torch.abs((curr_image_vis - proj_img_next) * mask_img_next).mean()
+loss_rgb_reproj = (loss_rgb_prev + loss_rgb_next) / 2.0
+
+total_loss = (loss_reproj * 1.0) + (loss_rgb_reproj * 1.5) + (loss_smoothloss * 0.05) + loss_mask
+```
+
+위처럼 간단하게 만듬. 가중치는 위처럼 줬음
+
+<img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/7a9d42ab-c4ab-4978-94af-8d31314a41c2" />
+
+```
+==> Epoch 170 완료 Train Loss : 0.4547 Train Reproj Loss : 0.3480 Train RGB Loss : 0.070115 Train Smooth Loss : 0.0318 Train Mask Loss : 0.000000 Time : 10.3403
+--- [Fixed Sample Monitoring] ---
+True fx: 160.00, True fy: 160.00
+K : 
+tensor([[[160.,   0., 112.],
+         [  0., 160., 112.],
+         [  0.,   0.,   1.]]], device='cuda:0')
+E_CURR_PREV : 
+tensor([[[ 0.9998, -0.0168,  0.0105, -0.0292],
+         [ 0.0191,  0.9566, -0.2909,  0.1460],
+         [-0.0051,  0.2910,  0.9567,  0.0682],
+         [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+E_CURR_NEXT : 
+tensor([[[ 0.9964,  0.0052,  0.0846, -0.0391],
+         [ 0.0178,  0.9630, -0.2690,  0.1512],
+         [-0.0829,  0.2695,  0.9594,  0.0208],
+         [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+Z min: 0.2095, Z max: 19.7635, 갭: 19.5540
+---------------------------------
+```
+
+망했음. 보면 RGB Loss가 낮음. 거의 smooth loss와 동급, 그 이상. 저렇게 뭉게뭉게 되는 이유가 어디에 있는지를 모르겠음.
+
+## 2026-05-30 0150 진행상태
+
+```
+if epoch < 50:
+                weight_reproj = 1.0
+                weight_rgb = 0.0
+                weight_smooth = 0.1
+            else:
+                weight_reproj = 1.0
+                weight_rgb = 1.0
+                weight_smooth = 0.05
+
+            total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + loss_mask
+```
+
+위처럼 바꿨음. 처음에는 rgb loss를 안줘서 카메라를 잡게 하기 위해
+
+<img width="672" height="672" alt="ezgif com-animated-gif-maker (1)" src="https://github.com/user-attachments/assets/027e2ff7-640c-4c4e-b012-628f432307d1" />
+
+또다시 망했음. 총 315번을 돌렸는데도.
 
 ---
 # 겪은 문제들
