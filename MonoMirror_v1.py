@@ -115,19 +115,19 @@ class ProjectionHead(nn.Module):
     def predict_K(self, prev_F, curr_F, next_F):
         B = curr_F.shape[0]
 
-        prev_F_mean = prev_F.mean(dim=1)
-        curr_F_mean = curr_F.mean(dim=1)
-        next_F_mean = next_F.mean(dim=1)
+        # prev_F_mean = prev_F.mean(dim=1)
+        # curr_F_mean = curr_F.mean(dim=1)
+        # next_F_mean = next_F.mean(dim=1)
 
-        combined_mean = (prev_F_mean + curr_F_mean + next_F_mean) / 3.0
+        # combined_mean = (prev_F_mean + curr_F_mean + next_F_mean) / 3.0
 
-        intrinsic_raw = self.intrinsic_mlp(combined_mean)
+        # intrinsic_raw = self.intrinsic_mlp(combined_mean)
 
-        # f = torch.tanh(intrinsic_raw) * 50.0 + 160.0 # 100 ~ 300
-        # fx, fy = f[:, 0], f[:, 1]
+        # # f = torch.tanh(intrinsic_raw) * 50.0 + 160.0 # 100 ~ 300
+        # # fx, fy = f[:, 0], f[:, 1]
 
-        fx = F.softplus(intrinsic_raw[:, 0]) + 150.0  # 최소 100 픽셀 보장
-        fy = F.softplus(intrinsic_raw[:, 1]) + 150.0
+        # fx = F.softplus(intrinsic_raw[:, 0]) + 150.0  # 최소 100 픽셀 보장
+        # fy = F.softplus(intrinsic_raw[:, 1]) + 150.0
         
         K = torch.zeros((B, 3, 3), device=curr_F.device)
         K[:, 0, 0] = 160
@@ -152,9 +152,9 @@ class ProjectionHead(nn.Module):
         # 일단은 0.05와 0.1로 제약 주기
         # tanh를 빼봄
         # 360도를 돌 필요가 없으니 360 / 8정도로
-        axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 3.14159 / 12.0 # -3.14159 ~ 3.14159
-        translation = F.normalize(extrinsic_raw[:, 3:], p=2, dim=-1) * 0.1
-        # translation = torch.tanh(extrinsic_raw[:, 3:]) * 0.1 # -0.1 ~ 0.1
+        axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 3.14159 / 6.0 # -3.14159 ~ 3.14159
+        # translation = F.normalize(extrinsic_raw[:, 3:], p=2, dim=-1) * 0.1
+        translation = torch.tanh(extrinsic_raw[:, 3:]) * 0.3 # -0.1 ~ 0.1
 
         # tx = torch.tanh(extrinsic_raw[:, 3:4]) * 0.1
         # ty = torch.tanh(extrinsic_raw[:, 4:5]) * 0.1

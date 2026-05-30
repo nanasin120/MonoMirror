@@ -299,7 +299,7 @@ class Smooth_Loss(nn.Module): # 깊이값을 부드럽게 만들어 주는 Loss
         
         return (smoothness_x.sum() + smoothness_y.sum()) / (mask_x.sum() + mask_y.sum() + 1e-8)
     
-class Feature_Reprojection_Loss(nn.Module):
+class Feature_Reprojection_Loss(nn.Module): # 재투영한 특징값 Loss
     def __init__(self):
         super(Feature_Reprojection_Loss, self).__init__()
 

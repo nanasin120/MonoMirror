@@ -17,9 +17,9 @@ if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
 BATCH = 2
 START_EPOCH = 0
-END_EPOCH = 1000
+END_EPOCH = 500
 ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
-LEARNING_RATE = 5e-5 # 1e-4에서 좀 낮춤
+LEARNING_RATE = 1e-4 # 1e-4에서 좀 낮춤
 IMAGE_SAVE_INTERVEL = 5
 WEIGHT_SAVE_INTERVEL = 50
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -54,7 +54,7 @@ scheduler = OneCycleLR(
     max_lr=LEARNING_RATE,
     steps_per_epoch=len(dataloader),
     epochs=ADDITIONAL_EPOCH,
-    pct_start=0.1, # 10%동안 warm up
+    pct_start=0.05, # 5%동안 warm up
     div_factor=25.0, # max_lr / 25로 시작
     final_div_factor=1000.0 # 마지막 학습률은 0에 가깝게 
 )
@@ -69,6 +69,7 @@ def train():
         train_smooth_loss = 0.0
         train_reproj_loss = 0.0
         train_mask_loss = 0.0
+        train_rgb_loss = 0.0
         epoch_start_time = time.time()
 
         batch_start_time = time.time()
@@ -114,10 +115,29 @@ def train():
             loss_smoothloss_2 = criterion_edge_smooth(CURR_D, curr_image_vis)
             loss_smoothloss_3 = criterion_edge_smooth(NEXT_D, next_image_vis)
 
+            # --- rgb loss ---
+            proj_img_prev, mask_img_prev = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
+            proj_img_next, mask_img_next = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
+            loss_rgb_prev = torch.abs((curr_image_vis - proj_img_prev) * mask_img_prev).mean()
+            loss_rgb_next = torch.abs((curr_image_vis - proj_img_next) * mask_img_next).mean()
+            loss_rgb_reproj = (loss_rgb_prev + loss_rgb_next) / 2.0
+            # --- ---
+
             loss_reproj = (loss_reproj_1 + loss_reproj_2) / 2.0
             loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2 + loss_smoothloss_3) / 3.0
 
-            total_loss = (loss_reproj * 1.0) + (loss_smoothloss * 0.005) + loss_mask
+            if epoch < 50:
+                weight_reproj = 1.0
+                weight_rgb = 0.0
+                weight_smooth = 0.1
+            else:
+                weight_reproj = 1.0
+                weight_rgb = 0.5
+                weight_smooth = 0.1
+
+            total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + loss_mask
+
+            # total_loss = (loss_reproj * 1.0) + (loss_rgb_reproj * 5.0) + (loss_smoothloss * 0.01) + loss_mask
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -131,17 +151,19 @@ def train():
                 batch_start_time = time.time()
 
             train_loss += total_loss.item()
-            train_smooth_loss += loss_smoothloss.item() * 0.001
-            train_reproj_loss += loss_reproj.item() * 1.0
+            train_smooth_loss += loss_smoothloss.item()
+            train_reproj_loss += loss_reproj.item()
             train_mask_loss += loss_mask.item()
+            train_rgb_loss += loss_rgb_reproj.item()
 
         avg_train_loss = train_loss / len(dataloader)
         avg_train_smooth_loss = train_smooth_loss / len(dataloader)
         avg_reproj_loss = train_reproj_loss / len(dataloader)
         avg_mask_loss = train_mask_loss / len(dataloader)
+        avg_rgb_loss = train_rgb_loss / len(dataloader)
 
         epoch_end_time = time.time()
-        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_reproj_loss:.4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Mask Loss : {avg_mask_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
+        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_reproj_loss:.4f} Train RGB Loss : {avg_rgb_loss:4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Mask Loss : {avg_mask_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
 
         if epoch % WEIGHT_SAVE_INTERVEL == 0:
             save_path = os.path.join(model_save_path, f'model_epoch_{epoch}.pth')

@@ -38,8 +38,7 @@ u_norm = (x.float() / W) - 0.5
 v_norm = (y.float() / H) - 0.5
 z_val = CURR_XYZ[0, ..., 2].view(224, 224) # 모델이 예측한 Z
 
-# 이제 이 u_norm, v_norm을 XYZ에 사용하면 
-# 전체적인 3D 공간의 스케일이 컵의 실제 비율과 비슷해집니다.
 XYZ = torch.stack([u_norm.to(DEVICE), v_norm.to(DEVICE), z_val], dim=-1).view(-1, 3)
 
-visualize_points(XYZ, curr_image_vis[0])
+visualize_points(CURR_XYZ[0], curr_image_vis[0])
+# visualize_points(XYZ, curr_image_vis[0])
