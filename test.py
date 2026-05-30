@@ -1,8 +1,8 @@
 import torch
-from MonoMirror_v1 import MonoMirror_v1
-from ImageDataset import ImageDataset
+from models.MonoMirror_v1 import MonoMirror_v1
+from data.ImageDataset import ImageDataset
 from defs import get_projected_image, load_croco_weights_to_dust3r, visualize_points
-from Loss import Minimum_Reprojection_Loss, Smooth_Loss
+from utils.Loss import Minimum_Reprojection_Loss, Smooth_Loss
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

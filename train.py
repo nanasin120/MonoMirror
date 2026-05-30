@@ -3,16 +3,16 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
-from MonoMirror_v1 import MonoMirror_v1
-from ImageDataset import ImageDataset
+from models.MonoMirror_v1 import MonoMirror_v1
+from data.ImageDataset import ImageDataset
 from defs import get_projected_image, load_croco_weights_to_dust3r, save_fixed_sample, get_projected_points
-from Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss, pointmap_Loss, Disparity_Loss, U3Frame_Loss, Mask_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss
+from utils.Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss, pointmap_Loss, Disparity_Loss, U3Frame_Loss, Mask_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss
 import os
 import time
 
-model_save_path = r'./model_save'
+model_save_path = r'./save/model_save'
 if not os.path.exists(model_save_path): os.makedirs(model_save_path)
-img_save_path = r'./image_save'
+img_save_path = r'./save/image_save'
 if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
 BATCH = 2
@@ -24,8 +24,8 @@ IMAGE_SAVE_INTERVEL = 5
 WEIGHT_SAVE_INTERVEL = 50
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-img_dir = r'cup_dataset'
-feat_dir = r'dino_features'
+img_dir = r'./dataset/cup_dataset'
+feat_dir = r'./dataset/dino_features'
 full_dataset = ImageDataset(img_dir=img_dir, feat_dir=feat_dir, frame_interval=3)
 
 dataloader = DataLoader(
@@ -37,7 +37,7 @@ dataloader = DataLoader(
 
 model = MonoMirror_v1().to(DEVICE)
 # model.load_state_dict(torch.load(r'model_save\best_model_epoch.pth', weights_only=True))
-load_croco_weights_to_dust3r(model, r'croco_epoch_150.pth')
+load_croco_weights_to_dust3r(model, r'./weights/croco_epoch_150.pth')
 
 criterion_reprojection = Minimum_Reprojection_Loss().to(DEVICE)
 criterion_smooth = Smooth_Loss().to(DEVICE)

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from blocks import PositionalEncoding2D, MultiHead, FeedForwardNetwork
+from models.blocks import PositionalEncoding2D, MultiHead, FeedForwardNetwork
 
 class Encoder(nn.Module): # Inputs안의 단어는 자기만 알던 놈이었음, 이젠 남들도 아는 놈이 됨
     def __init__(self, d_model=768, h=12):

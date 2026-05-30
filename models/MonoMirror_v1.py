@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from CroCo import CroCo
-from blocks import PositionalEncoding2D, MultiHead, FeedForwardNetwork
+from models.CroCo import CroCo
+from models.blocks import PositionalEncoding2D, MultiHead, FeedForwardNetwork
 from defs import axis_angle_to_matrix
 
 class Decoder(nn.Module):

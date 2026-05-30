@@ -1,6 +1,6 @@
 import os
 import torch
-from DINOv2 import DINOv2
+from models.DINOv2 import DINOv2
 from PIL import Image
 from torchvision import transforms
 
