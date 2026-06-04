@@ -2,6 +2,26 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class Pose_Consistency_Loss(nn.Module): # 이동량용 손실함수, 둘이 항등 행렬 나와야함
+    def __init__(self):
+        super(Pose_Consistency_Loss, self).__init__()
+
+    def forward(E_fwd, E_bwd):
+        """
+        E_fwd: [B, 4, 4]
+        E_bwd: [B, 4, 4]
+        """
+
+        B = E_fwd.size(0)
+        
+        I_target = torch.eye(4, device=E_fwd.device).unsqueeze(0).repeat(B, 1, 1)
+        
+        E_cycle = torch.bmm(E_fwd, E_bwd)
+        
+        consistency_loss = torch.abs(E_cycle - I_target).mean()
+        
+        return consistency_loss
+
 class Mask_Loss(nn.Module):
     def __init__(self):
         super(Mask_Loss, self).__init__()

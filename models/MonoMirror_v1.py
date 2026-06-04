@@ -109,8 +109,10 @@ class ProjectionHead(nn.Module):
         K = self.predict_K(prev_F, curr_F, next_F)
         E_CURR_PREV = self.predict_E(curr_F, prev_F)
         E_CURR_NEXT = self.predict_E(curr_F, next_F)
+        E_CURR_PREV_INV = self.predict_E(prev_F, curr_F)
+        E_CURR_NEXT_INV = self.predict_E(next_F, curr_F)
 
-        return K, E_CURR_PREV, E_CURR_NEXT
+        return K, E_CURR_PREV, E_CURR_NEXT, E_CURR_PREV_INV, E_CURR_NEXT_INV
     
     def predict_K(self, prev_F, curr_F, next_F):
         B = curr_F.shape[0]
@@ -381,9 +383,7 @@ class MonoMirror_v1(nn.Module):
 
         prev_F, curr_F, next_F = self.CroCo_Encoder(prev_img, curr_img, next_img) # [4, B, 196, 768]
 
-        K, E_CURR_PREV, E_CURR_NEXT = self.projection_head(prev_F[-1], curr_F[-1], next_F[-1])
-        E_CURR_PREV_INV = torch.inverse(E_CURR_PREV)
-        E_CURR_NEXT_INV = torch.inverse(E_CURR_NEXT)
+        K, E_CURR_PREV, E_CURR_NEXT, E_CURR_PREV_INV, E_CURR_NEXT_INV = self.projection_head(prev_F[-1], curr_F[-1], next_F[-1])
 
         prev_G = prev_F[-1].clone()
         curr_G = curr_F[-1].clone()
@@ -437,7 +437,10 @@ class MonoMirror_v1(nn.Module):
             'XYZ' : [PREV_XYZ, CURR_XYZ, NEXT_XYZ],
             'D' : [PREV_D, CURR_D, NEXT_D],
             'MATRIX' : [PREV_MATRIX, NEXT_MATRIX],
-            'MATRIX_INV' : [PREV_MATRIX_INV, NEXT_MATRIX_INV]
+            'MATRIX_INV' : [PREV_MATRIX_INV, NEXT_MATRIX_INV],
+
+            'E' : [E_CURR_PREV, E_CURR_NEXT],
+            'E_INV' : [E_CURR_PREV_INV, E_CURR_NEXT_INV]
         }
     
     def get_XYZ(self, B, Z, K):

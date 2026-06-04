@@ -1,12 +1,13 @@
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import OneCycleLR
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import DataLoader
 from models.MonoMirror_v1 import MonoMirror_v1
 from data.ImageDataset import ImageDataset
 from defs import get_projected_image, load_croco_weights_to_dust3r, save_fixed_sample, get_projected_points
-from utils.Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss, pointmap_Loss, Disparity_Loss, U3Frame_Loss, Mask_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss
+from utils.Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth_Loss, pointmap_Loss
+from utils.Loss import Disparity_Loss, U3Frame_Loss, Mask_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss, Pose_Consistency_Loss
 import os
 import time
 
@@ -40,25 +41,32 @@ model = MonoMirror_v1().to(DEVICE)
 load_croco_weights_to_dust3r(model, r'./weights/croco_epoch_150.pth')
 
 criterion_reprojection = Minimum_Reprojection_Loss().to(DEVICE)
-criterion_smooth = Smooth_Loss().to(DEVICE)
+# criterion_smooth = Smooth_Loss().to(DEVICE)
 criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
-criterion_pointmap_loss = pointmap_Loss().to(DEVICE)
-criterion_disparity_loss = Disparity_Loss().to(DEVICE)
-criterion_u3frame_loss = U3Frame_Loss().to(DEVICE)
+# criterion_pointmap_loss = pointmap_Loss().to(DEVICE)
+# criterion_disparity_loss = Disparity_Loss().to(DEVICE)
+# criterion_u3frame_loss = U3Frame_Loss().to(DEVICE)
 criterion_mask_loss = Mask_Loss().to(DEVICE)
 criterion_feature_reprojection = Feature_Reprojection_Loss().to(DEVICE)
 criterion_rgb_reprojection = RGB_Reprojection_Loss().to(DEVICE)
+criterion_pose_consistency_loss = Pose_Consistency_Loss().to(DEVICE)
 
 optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
-scheduler = OneCycleLR(
+scheduler = CosineAnnealingWarmRestarts(
     optimizer,
-    max_lr=LEARNING_RATE,
-    steps_per_epoch=len(dataloader),
-    epochs=ADDITIONAL_EPOCH,
-    pct_start=0.05, # 5%동안 warm up
-    div_factor=25.0, # max_lr / 25로 시작
-    final_div_factor=1000.0 # 마지막 학습률은 0에 가깝게 
+    T_0=10,
+    T_mult=2,
+    eta_min=1e-6
 )
+# scheduler = OneCycleLR(
+#     optimizer,
+#     max_lr=LEARNING_RATE,
+#     steps_per_epoch=len(dataloader),
+#     epochs=ADDITIONAL_EPOCH,
+#     pct_start=0.05, # 5%동안 warm up
+#     div_factor=25.0, # max_lr / 25로 시작
+#     final_div_factor=1000.0 # 마지막 학습률은 0에 가깝게 
+# )
 
 def train():
     print('TRAIN START')
@@ -71,6 +79,7 @@ def train():
         train_reproj_loss = 0.0
         train_mask_loss = 0.0
         train_rgb_loss = 0.0
+        train_consist_loss = 0.0
         epoch_start_time = time.time()
 
         batch_start_time = time.time()
@@ -111,7 +120,6 @@ def train():
             # loss_reproj_2 = criterion_feature_reprojection(curr_feature, projected_img_n2c, valid_mask_n2c)
 
             loss_reproj = criterion_feature_reprojection(curr_feature, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c)
-
             loss_mask = criterion_mask_loss(valid_mask_p2c, valid_mask_n2c)
 
             loss_smoothloss_1 = criterion_edge_smooth(PREV_D, prev_image_vis)
@@ -124,12 +132,17 @@ def train():
             loss_rgb_reproj = criterion_rgb_reprojection(curr_image_vis, proj_img_prev, mask_img_prev, proj_img_next, mask_img_next)
             # --- ---
 
+            loss_consist_prev = criterion_pose_consistency_loss(OUTPUTS['E'][0], OUTPUTS['E_INV'][0])
+            loss_consist_next = criterion_pose_consistency_loss(OUTPUTS['E'][1], OUTPUTS['E_INV'][1])
+            loss_consist = (loss_consist_prev + loss_consist_next) / 2.0
+
             # loss_reproj = (loss_reproj_1 + loss_reproj_2) / 2.0
             loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2 + loss_smoothloss_3) / 3.0
 
             weight_reproj = 1.0
             weight_rgb = 1.0
             weight_smooth = 0.1
+            weight_consist = 1.0
             
             # if epoch < 50:
             #     weight_rgb = 0.0
@@ -138,7 +151,7 @@ def train():
             # else:
             #     weight_rgb = 0.5
 
-            total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + loss_mask
+            total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + loss_mask + (loss_consist * weight_consist)
 
             # total_loss = (loss_reproj * 1.0) + (loss_rgb_reproj * 5.0) + (loss_smoothloss * 0.01) + loss_mask
 
@@ -146,11 +159,10 @@ def train():
             total_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
-            scheduler.step()
 
             if batch_idx % 10 == 0:
                 batch_end_time = time.time()
-                print(f'Epoch [{epoch}/{END_EPOCH}] Batch [{batch_idx}/{len(dataloader)}] Loss_total : {total_loss.item():.4f} Time : {batch_end_time-batch_start_time:.4f}')
+                print(f"Epoch [{epoch}/{END_EPOCH}] Batch [{batch_idx}/{len(dataloader)}] Loss_total : {total_loss.item():.4f} Time : {batch_end_time-batch_start_time:.4f}")
                 batch_start_time = time.time()
 
             train_loss += total_loss.item()
@@ -158,15 +170,18 @@ def train():
             train_reproj_loss += loss_reproj.item()
             train_mask_loss += loss_mask.item()
             train_rgb_loss += loss_rgb_reproj.item()
+            train_consist_loss += loss_consist.item()
 
         avg_train_loss = train_loss / len(dataloader)
         avg_train_smooth_loss = train_smooth_loss / len(dataloader)
         avg_reproj_loss = train_reproj_loss / len(dataloader)
         avg_mask_loss = train_mask_loss / len(dataloader)
         avg_rgb_loss = train_rgb_loss / len(dataloader)
+        avg_consist_loss = train_consist_loss / len(dataloader)
 
         epoch_end_time = time.time()
-        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_reproj_loss:.4f} Train RGB Loss : {avg_rgb_loss:4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Mask Loss : {avg_mask_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
+        scheduler.step()
+        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_reproj_loss:.4f} Train RGB Loss : {avg_rgb_loss:4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Mask Loss : {avg_mask_loss:4f} Train Consist Loss : {avg_consist_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f} LR : {optimizer.param_groups[0]['lr']:.6f}')
 
         if epoch % WEIGHT_SAVE_INTERVEL == 0:
             save_path = os.path.join(model_save_path, f'model_epoch_{epoch}.pth')
