@@ -22,7 +22,7 @@ class Pose_Consistency_Loss(nn.Module): # 이동량용 손실함수, 둘이 항�
         
         return consistency_loss
 
-class Mask_Loss(nn.Module):
+class Mask_Loss(nn.Module): # 마스크가 너무 많으면 손실
     def __init__(self):
         super(Mask_Loss, self).__init__()
 
