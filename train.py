@@ -1,7 +1,7 @@
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
 from models.MonoMirror_v1 import MonoMirror_v1
 from data.ImageDataset import ImageDataset
@@ -21,8 +21,8 @@ START_EPOCH = 0
 END_EPOCH = 500
 ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
 LEARNING_RATE = 1e-4 # 1e-4에서 좀 낮춤
-IMAGE_SAVE_INTERVEL = 5
-WEIGHT_SAVE_INTERVEL = 50
+IMAGE_SAVE_INTERVEL = 2
+WEIGHT_SAVE_INTERVEL = 10
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 img_dir = r'./dataset/cup_dataset'
@@ -52,21 +52,22 @@ criterion_rgb_reprojection = RGB_Reprojection_Loss().to(DEVICE)
 criterion_pose_consistency_loss = Pose_Consistency_Loss().to(DEVICE)
 
 optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
-scheduler = CosineAnnealingWarmRestarts(
-    optimizer,
-    T_0=10,
-    T_mult=2,
-    eta_min=1e-6
-)
-# scheduler = OneCycleLR(
+# scheduler = CosineAnnealingWarmRestarts(
 #     optimizer,
-#     max_lr=LEARNING_RATE,
-#     steps_per_epoch=len(dataloader),
-#     epochs=ADDITIONAL_EPOCH,
-#     pct_start=0.05, # 5%동안 warm up
-#     div_factor=25.0, # max_lr / 25로 시작
-#     final_div_factor=1000.0 # 마지막 학습률은 0에 가깝게 
+#     T_0=10,
+#     T_mult=2,
+#     eta_min=1e-6
 # )
+
+scheduler = OneCycleLR(
+    optimizer,
+    max_lr=LEARNING_RATE,
+    steps_per_epoch=len(dataloader),
+    epochs=ADDITIONAL_EPOCH,
+    pct_start=0.05, # 5%동안 warm up
+    div_factor=25.0, # max_lr / 25로 시작
+    final_div_factor=1000.0 # 마지막 학습률은 max_lr / 1000.0
+)
 
 def train():
     print('TRAIN START')
@@ -98,67 +99,76 @@ def train():
 
             OUTPUTS = model(prev_image_model, curr_image_model, next_image_model)
 
-            XYZ = OUTPUTS['XYZ']
-            D = OUTPUTS['D']
-            MATRIX = OUTPUTS['MATRIX']
-            MATRIX_INV = OUTPUTS['MATRIX_INV']
+            XYZ_multi = OUTPUTS['XYZ']
+            D_multi = OUTPUTS['D']
+            
+            PREV_MATRIX, NEXT_MATRIX = OUTPUTS['MATRIX'][0], OUTPUTS['MATRIX'][1]
 
-            PREV_XYZ, CURR_XYZ, NEXT_XYZ = XYZ[0], XYZ[1], XYZ[2]
-            PREV_D, CURR_D, NEXT_D = D[0], D[1], D[2]
-            PREV_MATRIX, NEXT_MATRIX = MATRIX[0], MATRIX[1]
-            PREV_MATRIX_INV, NEXT_MATRIX_INV = MATRIX_INV[0], MATRIX_INV[1]
+            # 누적을 위한 변수 초기화
+            total_reproj_loss = 0.0
+            total_mask_loss = 0.0
+            total_smooth_loss = 0.0
+            total_rgb_loss = 0.0
 
-            projected_img_p2c, valid_mask_p2c = get_projected_image(curr_feature, prev_feature, CURR_XYZ, PREV_MATRIX)
-            projected_img_n2c, valid_mask_n2c = get_projected_image(curr_feature, next_feature, CURR_XYZ, NEXT_MATRIX)
+            # 4개의 해상도(28, 56, 112, 224)에 대해 동일한 로직을 4번 반복
+            for scale in range(4):
+                CURR_XYZ = XYZ_multi[scale][1]
+                
+                PREV_D = D_multi[scale][0]
+                CURR_D = D_multi[scale][1]
+                NEXT_D = D_multi[scale][2]
 
-            # loss_3frame = criterion_u3frame_loss(prev_image, curr_image, next_image, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c)
+                # -----------------------------------------
+                # [1] 특징(Feature) 재투영 및 마스크 오차
+                # -----------------------------------------
+                projected_img_p2c, valid_mask_p2c = get_projected_image(curr_feature, prev_feature, CURR_XYZ, PREV_MATRIX)
+                projected_img_n2c, valid_mask_n2c = get_projected_image(curr_feature, next_feature, CURR_XYZ, NEXT_MATRIX)
 
-            # loss_reproj_1 = criterion_reprojection(curr_feature, prev_feature, projected_img_p2c, valid_mask_p2c)
-            # loss_reproj_2 = criterion_reprojection(curr_feature, next_feature, projected_img_n2c, valid_mask_n2c)
+                total_reproj_loss += criterion_feature_reprojection(curr_feature, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c)
+                total_mask_loss += criterion_mask_loss(valid_mask_p2c, valid_mask_n2c)
 
-            # loss_reproj_1 = criterion_feature_reprojection(curr_feature, projected_img_p2c, valid_mask_p2c)
-            # loss_reproj_2 = criterion_feature_reprojection(curr_feature, projected_img_n2c, valid_mask_n2c)
+                # -----------------------------------------
+                # [2] RGB 재투영 오차
+                # -----------------------------------------
+                proj_img_prev, mask_img_prev = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
+                proj_img_next, mask_img_next = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
+                
+                total_rgb_loss += criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_img_prev, mask_img_prev, proj_img_next, mask_img_next)
 
-            loss_reproj = criterion_feature_reprojection(curr_feature, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c)
-            loss_mask = criterion_mask_loss(valid_mask_p2c, valid_mask_n2c)
+                # -----------------------------------------
+                # [3] 스무스(Smooth) 오차
+                # -----------------------------------------
+                loss_smoothloss_1 = criterion_edge_smooth(PREV_D, prev_image_vis)
+                loss_smoothloss_2 = criterion_edge_smooth(CURR_D, curr_image_vis)
+                loss_smoothloss_3 = criterion_edge_smooth(NEXT_D, next_image_vis)
+                total_smooth_loss += (loss_smoothloss_1 + loss_smoothloss_2 + loss_smoothloss_3) / 3.0
 
-            loss_smoothloss_1 = criterion_edge_smooth(PREV_D, prev_image_vis)
-            loss_smoothloss_2 = criterion_edge_smooth(CURR_D, curr_image_vis)
-            loss_smoothloss_3 = criterion_edge_smooth(NEXT_D, next_image_vis)
-
-            # --- rgb loss ---
-            proj_img_prev, mask_img_prev = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
-            proj_img_next, mask_img_next = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
-            loss_rgb_reproj = criterion_rgb_reprojection(curr_image_vis, proj_img_prev, mask_img_prev, proj_img_next, mask_img_next)
-            # --- ---
+            loss_reproj = total_reproj_loss / 4.0
+            loss_mask = total_mask_loss / 4.0
+            loss_rgb_reproj = total_rgb_loss / 4.0
+            loss_smoothloss = total_smooth_loss / 4.0
 
             loss_consist_prev = criterion_pose_consistency_loss(OUTPUTS['E'][0], OUTPUTS['E_INV'][0])
             loss_consist_next = criterion_pose_consistency_loss(OUTPUTS['E'][1], OUTPUTS['E_INV'][1])
             loss_consist = (loss_consist_prev + loss_consist_next) / 2.0
 
-            # loss_reproj = (loss_reproj_1 + loss_reproj_2) / 2.0
-            loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2 + loss_smoothloss_3) / 3.0
-
-            weight_reproj = 1.0
-            weight_rgb = 1.0
-            weight_smooth = 0.1
+            weight_reproj = 2.0
+            weight_rgb = 2.0
+            weight_smooth = 0.0
             weight_consist = 1.0
+
+            if epoch > 30:
+                weight_reproj = 3.0
+                weight_smooth = 0.05
             
-            # if epoch < 50:
-            #     weight_rgb = 0.0
-            # elif epoch < 100:
-            #     weight_rgb = 0.5 * ((epoch - 50) / 50.0)
-            # else:
-            #     weight_rgb = 0.5
-
             total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + loss_mask + (loss_consist * weight_consist)
-
-            # total_loss = (loss_reproj * 1.0) + (loss_rgb_reproj * 5.0) + (loss_smoothloss * 0.01) + loss_mask
 
             optimizer.zero_grad()
             total_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+            
+            scheduler.step()
 
             if batch_idx % 10 == 0:
                 batch_end_time = time.time()
@@ -180,8 +190,8 @@ def train():
         avg_consist_loss = train_consist_loss / len(dataloader)
 
         epoch_end_time = time.time()
-        scheduler.step()
-        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_reproj_loss:.4f} Train RGB Loss : {avg_rgb_loss:4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Mask Loss : {avg_mask_loss:4f} Train Consist Loss : {avg_consist_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f} LR : {optimizer.param_groups[0]['lr']:.6f}')
+        # scheduler.step()
+        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_reproj_loss:.4f} Train RGB Loss : {avg_rgb_loss:4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Mask Loss : {avg_mask_loss:4f} Train Consist Loss : {avg_consist_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
 
         if epoch % WEIGHT_SAVE_INTERVEL == 0:
             save_path = os.path.join(model_save_path, f'model_epoch_{epoch}.pth')

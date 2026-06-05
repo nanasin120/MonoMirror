@@ -22,22 +22,19 @@ def save_fixed_sample(model, dataset, epoch, save_path, device):
         # 모델 추론
         OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, True)
         
-        XYZ = OUTPUTS['XYZ']
-        D = OUTPUTS['D']
+        XYZ_multi = OUTPUTS['XYZ']
+        D_multi = OUTPUTS['D']
         MATRIX = OUTPUTS['MATRIX']
         MATRIX_INV = OUTPUTS['MATRIX_INV']
 
-        PREV_XYZ, CURR_XYZ, NEXT_XYZ = XYZ[0], XYZ[1], XYZ[2]
-        PREV_D, CURR_D, NEXT_D = D[0], D[1], D[2]
+        PREV_XYZ, CURR_XYZ, NEXT_XYZ = XYZ_multi[3][0], XYZ_multi[3][1], XYZ_multi[3][2]
+        PREV_D, CURR_D, NEXT_D = D_multi[3][0], D_multi[3][1], D_multi[3][2]
+        
         PREV_MATRIX, NEXT_MATRIX = MATRIX[0], MATRIX[1]
-        PREV_MATRIX_INV, NEXT_MATRIX_INV = MATRIX_INV[0], MATRIX_INV[1]
 
         # 재투영 이미지 생성
         projected_img_p2c, _ = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
         projected_img_n2c, _ = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
-
-        depth_resized_p = PREV_D.view(1, 1, 224, 224) # [1, 1, 14, 14]로 변환
-        depth_resized_n = NEXT_D.view(1, 1, 224, 224) # [1, 1, 14, 14]로 변환
 
         viz_d_prev = get_depth_viz(PREV_D, prev_image_vis)
         viz_d_curr = get_depth_viz(CURR_D, curr_image_vis)

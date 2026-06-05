@@ -6,7 +6,7 @@ class Pose_Consistency_Loss(nn.Module): # 이동량용 손실함수, 둘이 항�
     def __init__(self):
         super(Pose_Consistency_Loss, self).__init__()
 
-    def forward(E_fwd, E_bwd):
+    def forward(self, E_fwd, E_bwd):
         """
         E_fwd: [B, 4, 4]
         E_bwd: [B, 4, 4]
@@ -95,7 +95,7 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
         img: 원본 입력 이미지 [B, 3, H, W]
         """
         mean_disp = disp.mean(dim=(1, 2, 3), keepdim=True)
-        disp = disp / (mean_disp + 1e-7)
+        # disp = disp / (mean_disp + 1e-7)
 
         # 깊이(시차)의 변화량(Gradient) 계산
         disp_dx = torch.abs(disp[:, :, :, :-1] - disp[:, :, :, 1:])
@@ -107,8 +107,8 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
 
         # 이미지 색상이 변하면 깊이 평활화를 꺼버림 (exp(-색상변화))
         # 색상 변화가 클수록 가중치가 0에 가까워져서 Smooth Loss가 무시됨
-        weight_x = torch.exp(-img_dx * 30.0)
-        weight_y = torch.exp(-img_dy * 30.0)
+        weight_x = torch.exp(-img_dx * 10.0)
+        weight_y = torch.exp(-img_dy * 10.0)
 
         # 최종 Loss 계산
         smoothness_x = disp_dx * weight_x
@@ -348,7 +348,7 @@ class RGB_Reprojection_Loss(nn.Module): # 재투영한 특징값 Loss
         super(RGB_Reprojection_Loss, self).__init__()
         self.pe = photometric_error()
 
-    def forward(self, curr_image_vis, proj_img_prev, mask_img_prev, proj_img_next, mask_img_next):
+    def forward(self, curr_image_vis, prev_image_vis, next_image_vis, proj_img_prev, mask_img_prev, proj_img_next, mask_img_next):
         # [B, 3, H, W] -> 3채널 오차의 평균을 내어 [B, 1, H, W]로 변환 (아직 공간 H, W 평균은 내면 안 됨!)
         rgb_loss_p = self.pe(curr_image_vis, proj_img_prev)
         rgb_loss_n = self.pe(curr_image_vis, proj_img_next)
@@ -357,9 +357,15 @@ class RGB_Reprojection_Loss(nn.Module): # 재투영한 특징값 Loss
         rgb_loss_n[~mask_img_next.bool()] = 9999.0
         
         min_rgb_loss = torch.minimum(rgb_loss_p, rgb_loss_n)
+
+        source_loss_p = self.pe(curr_image_vis, prev_image_vis)
+        source_loss_n = self.pe(curr_image_vis, next_image_vis)
+        min_source_loss = torch.minimum(source_loss_p, source_loss_n)
+
+        final_loss = torch.minimum(min_rgb_loss, min_source_loss)
         
         valid_mask_rgb_any = (mask_img_prev.bool() | mask_img_next.bool()).float()
-        loss_rgb_reproj = (min_rgb_loss * valid_mask_rgb_any).sum() / (valid_mask_rgb_any.sum() + 1e-8)
+        loss_rgb_reproj = (final_loss * valid_mask_rgb_any).sum() / (valid_mask_rgb_any.sum() + 1e-8)
         
         return loss_rgb_reproj
 

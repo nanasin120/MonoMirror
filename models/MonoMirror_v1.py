@@ -62,8 +62,8 @@ class DepthHead(nn.Module):
         out = self.MLP(all_G) # [B, 1, 224, 224]
 
         disp_raw = torch.sigmoid(out) # 0 ~ 1
-        min_disp = 0.05 # 100
-        max_disp = 5.0 # 0.1
+        min_disp = 0.1 # 100
+        max_disp = 10.0 # 0.1
         
         # disp_raw가 0이면 0.01, 1이면 10.0
         # 0.1 ~ 10.0
@@ -260,25 +260,25 @@ class FeatureUpsampler(nn.Module):
         
         x = self.up1(x) # [B, 256, 28, 28]
         s1 = self.skip1(f1) # [B, 256, 28, 28]
-        x = torch.cat([x, s1], dim=1) # Concat: [B, 512, 28, 28]
-        x = self.fuse1(x) # Fuse: [B, 256, 28, 28]
+        x = torch.cat([x, s1], dim=1) # [B, 512, 28, 28]
+        out_28 = self.fuse1(x) # [B, 256, 28, 28]
 
-        x = self.up2(x) # [B, 128, 56, 56]
+        x = self.up2(out_28) # [B, 128, 56, 56]
         s2 = self.skip2(f2) # [B, 128, 56, 56]
-        x = torch.cat([x, s2], dim=1) # Concat: [B, 256, 56, 56]
-        x = self.fuse2(x) # Fuse: [B, 128, 56, 56]
+        x = torch.cat([x, s2], dim=1) # [B, 256, 56, 56]
+        out_56 = self.fuse2(x) # [B, 128, 56, 56]
 
-        x = self.up3(x) # [B, 64, 112, 112]
+        x = self.up3(out_56) # [B, 64, 112, 112]
         s3 = self.skip3(f3) # [B, 64, 112, 112]
-        x = torch.cat([x, s3], dim=1) # Concat: [B, 128, 112, 112]
-        x = self.fuse3(x) # Fuse: [B, 64, 112, 112]
+        x = torch.cat([x, s3], dim=1) # [B, 128, 112, 112]
+        out_112 = self.fuse3(x) # [B, 64, 112, 112]
 
-        x = self.up4(x) # [B, 32, 224, 224]
+        x = self.up4(out_112) # [B, 32, 224, 224]
         s4 = self.skip4(f4) # [B, 32, 224, 224]
-        x = torch.cat([x, s4], dim=1) # Concat: [B, 64, 224, 224]
-        x = self.fuse4(x) # Fuse: [B, 32, 224, 224]
+        x = torch.cat([x, s4], dim=1) # [B, 64, 224, 224]
+        out_224 = self.fuse4(x) # [B, 32, 224, 224]
 
-        return x
+        return [out_28, out_56, out_112, out_224]
 
 class ImplicitDepthHead(nn.Module):
     def __init__(self, in_channels=768, img_size=224):
@@ -364,7 +364,10 @@ class MonoMirror_v1(nn.Module):
 
         self.upsampler = FeatureUpsampler()
 
-        self.depth_Head = DepthHead()
+        self.depth_Head_28 = DepthHead(in_channel=256)
+        self.depth_Head_56 = DepthHead(in_channel=128)
+        self.depth_Head_112 = DepthHead(in_channel=64)
+        self.depth_Head_224 = DepthHead(in_channel=32)
 
         # self.implictDepthHead = ImplicitDepthHead()
 
@@ -403,23 +406,64 @@ class MonoMirror_v1(nn.Module):
             prev_G = decoder(prev_G, tmp_curr, E_CURR_PREV_INV)
             next_G = decoder(next_G, tmp_curr, E_CURR_NEXT_INV)
 
-        PREV_G_224x224 = self.upsampler(prev_G, prev_F) # [B, 32, 224, 224]
-        CURR_G_224x224 = self.upsampler(curr_G, curr_F) # [B, 32, 224, 224]
-        NEXT_G_224x224 = self.upsampler(next_G, next_F) # [B, 32, 224, 224]
+        # out_28, out_56, out_112, out_224
+        # [B, 256, 28, 28]
+        # [B, 128, 56, 56]
+        # [B, 64, 112, 112]
+        # [B, 32, 224, 224]
+        PREV_G_28, PREV_G_56, PREV_G_112, PREV_G_224  = self.upsampler(prev_G, prev_F)
+        CURR_G_28, CURR_G_56, CURR_G_112, CURR_G_224 = self.upsampler(curr_G, curr_F)
+        NEXT_G_28, NEXT_G_56, NEXT_G_112, NEXT_G_224 = self.upsampler(next_G, next_F)
 
-        B, C, H, W = CURR_G_224x224.shape
+        B = PREV_G_28.shape[0]
 
-        PREV_Z, PREV_D = self.depth_Head(PREV_G_224x224) # [B, 1, 224, 224]
-        CURR_Z, CURR_D = self.depth_Head(CURR_G_224x224) # [B, 1, 224, 224]
-        NEXT_Z, NEXT_D = self.depth_Head(NEXT_G_224x224) # [B, 1, 224, 224]
+        PREV_Z_28, PREV_D_28 = self.depth_Head_28(PREV_G_28) # [B, 1, 28, 28]
+        CURR_Z_28, CURR_D_28 = self.depth_Head_28(CURR_G_28) # [B, 1, 28, 28]
+        NEXT_Z_28, NEXT_D_28 = self.depth_Head_28(NEXT_G_28) # [B, 1, 28, 28]
+        
+        PREV_Z_56, PREV_D_56 = self.depth_Head_56(PREV_G_56) # [B, 1, 56, 56]
+        CURR_Z_56, CURR_D_56 = self.depth_Head_56(CURR_G_56) # [B, 1, 56, 56]
+        NEXT_Z_56, NEXT_D_56 = self.depth_Head_56(NEXT_G_56) # [B, 1, 56, 56]
+        
+        PREV_Z_112, PREV_D_112 = self.depth_Head_112(PREV_G_112) # [B, 1, 112, 112]
+        CURR_Z_112, CURR_D_112 = self.depth_Head_112(CURR_G_112) # [B, 1, 112, 112]
+        NEXT_Z_112, NEXT_D_112 = self.depth_Head_112(NEXT_G_112) # [B, 1, 112, 112]
+        
+        PREV_Z_224, PREV_D_224 = self.depth_Head_224(PREV_G_224) # [B, 1, 224, 224]
+        CURR_Z_224, CURR_D_224 = self.depth_Head_224(CURR_G_224) # [B, 1, 224, 224]
+        NEXT_Z_224, NEXT_D_224 = self.depth_Head_224(NEXT_G_224) # [B, 1, 224, 224]
 
-        # PREV_Z, PREV_D = self.implictDepthHead(prev_G, prev_F[-1])
-        # CURR_Z, CURR_D = self.implictDepthHead(curr_G, curr_F[-1])
-        # NEXT_Z, NEXT_D = self.implictDepthHead(next_G, next_F[-1])
+        PREV_D_28_UP = F.interpolate(PREV_D_28, size=(224, 224), mode='bilinear', align_corners=False)
+        CURR_D_28_UP = F.interpolate(CURR_D_28, size=(224, 224), mode='bilinear', align_corners=False)
+        NEXT_D_28_UP = F.interpolate(NEXT_D_28, size=(224, 224), mode='bilinear', align_corners=False)
 
-        PREV_XYZ = self.get_XYZ(B, PREV_Z, K)
-        CURR_XYZ = self.get_XYZ(B, CURR_Z, K)
-        NEXT_XYZ = self.get_XYZ(B, NEXT_Z, K)
+        PREV_D_56_UP = F.interpolate(PREV_D_56, size=(224, 224), mode='bilinear', align_corners=False)
+        CURR_D_56_UP = F.interpolate(CURR_D_56, size=(224, 224), mode='bilinear', align_corners=False)
+        NEXT_D_56_UP = F.interpolate(NEXT_D_56, size=(224, 224), mode='bilinear', align_corners=False)
+
+        PREV_D_112_UP = F.interpolate(PREV_D_112, size=(224, 224), mode='bilinear', align_corners=False)
+        CURR_D_112_UP = F.interpolate(CURR_D_112, size=(224, 224), mode='bilinear', align_corners=False)
+        NEXT_D_112_UP = F.interpolate(NEXT_D_112, size=(224, 224), mode='bilinear', align_corners=False)
+
+        PREV_D_224_UP = PREV_D_224
+        CURR_D_224_UP = CURR_D_224
+        NEXT_D_224_UP = NEXT_D_224
+
+        PREV_XYZ_28 = self.get_XYZ(B, 1.0 / PREV_D_28_UP, K)
+        CURR_XYZ_28 = self.get_XYZ(B, 1.0 / CURR_D_28_UP, K)
+        NEXT_XYZ_28 = self.get_XYZ(B, 1.0 / NEXT_D_28_UP, K)
+
+        PREV_XYZ_56 = self.get_XYZ(B, 1.0 / PREV_D_56_UP, K)
+        CURR_XYZ_56 = self.get_XYZ(B, 1.0 / CURR_D_56_UP, K)
+        NEXT_XYZ_56 = self.get_XYZ(B, 1.0 / NEXT_D_56_UP, K)
+
+        PREV_XYZ_112 = self.get_XYZ(B, 1.0 / PREV_D_112_UP, K)
+        CURR_XYZ_112 = self.get_XYZ(B, 1.0 / CURR_D_112_UP, K)
+        NEXT_XYZ_112 = self.get_XYZ(B, 1.0 / NEXT_D_112_UP, K)
+
+        PREV_XYZ_224 = self.get_XYZ(B, 1.0 / PREV_D_224_UP, K)
+        CURR_XYZ_224 = self.get_XYZ(B, 1.0 / CURR_D_224_UP, K)
+        NEXT_XYZ_224 = self.get_XYZ(B, 1.0 / NEXT_D_224_UP, K)
 
         PREV_MATRIX, PREV_MATRIX_INV = self.get_MATRIX(B, K, E_CURR_PREV, E_CURR_PREV_INV)
         NEXT_MATRIX, NEXT_MATRIX_INV = self.get_MATRIX(B, K, E_CURR_NEXT, E_CURR_NEXT_INV)
@@ -430,12 +474,22 @@ class MonoMirror_v1(nn.Module):
             print(f"K : \n{K}")
             print(f"E_CURR_PREV : \n{E_CURR_PREV}")
             print(f"E_CURR_NEXT : \n{E_CURR_NEXT}")
-            print(f"Z min: {CURR_Z.min().item():.4f}, Z max: {CURR_Z.max().item():.4f}, 갭: {(CURR_Z.max() - CURR_Z.min()).item():.4f}")
+            print(f"Z min: {CURR_Z_224.min().item():.4f}, Z max: {CURR_Z_224.max().item():.4f}, 갭: {(CURR_Z_224.max() - CURR_Z_224.min()).item():.4f}")
             print(f"---------------------------------")
 
         return {
-            'XYZ' : [PREV_XYZ, CURR_XYZ, NEXT_XYZ],
-            'D' : [PREV_D, CURR_D, NEXT_D],
+            'XYZ' : [
+                [PREV_XYZ_28, CURR_XYZ_28, NEXT_XYZ_28],
+                [PREV_XYZ_56, CURR_XYZ_56, NEXT_XYZ_56],
+                [PREV_XYZ_112, CURR_XYZ_112, NEXT_XYZ_112],
+                [PREV_XYZ_224, CURR_XYZ_224, NEXT_XYZ_224]
+            ],
+            'D' : [
+                [PREV_D_28_UP, CURR_D_28_UP, NEXT_D_28_UP],
+                [PREV_D_56_UP, CURR_D_56_UP, NEXT_D_56_UP],
+                [PREV_D_112_UP, CURR_D_112_UP, NEXT_D_112_UP],
+                [PREV_D_224_UP, CURR_D_224_UP, NEXT_D_224_UP]
+            ],
             'MATRIX' : [PREV_MATRIX, NEXT_MATRIX],
             'MATRIX_INV' : [PREV_MATRIX_INV, NEXT_MATRIX_INV],
 
