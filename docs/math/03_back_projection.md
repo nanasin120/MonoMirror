@@ -70,7 +70,7 @@ d \\
 ```
 
 ## 3. 최종 정리
-* 투영 (Projection): 3D 공간 $(X, Y, Z)$ $\rarr$ 2D 화면 $(u, v)$
-* 역투영 (Back Projection): 2D 화면 $(u, v)$ + 깊이 $(d)$ $\rarr$ 3D 공간 $(X, Y, Z)$
+* 투영 (Projection): 3D 공간 $(X, Y, Z)$ $\rightarrow$ 2D 화면 $(u, v)$
+* 역투영 (Back Projection): 2D 화면 $(u, v)$ + 깊이 $(d)$ $\rightarrow$ 3D 공간 $(X, Y, Z)$
 
 위의 공식을 통해 2차원의 픽셀을 3차원으로 올릴 수 있습니다.
