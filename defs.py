@@ -5,7 +5,7 @@ import torchvision.utils as vutils
 import os
 import numpy as np
 
-def save_fixed_sample(model, dataset, epoch, save_path, device):
+def save_fixed_sample(model, dataset, epoch, save_path, device, version):
     model.eval()
     with torch.no_grad():
         # 고정된 첫 번째 데이터 가져오기
@@ -22,15 +22,25 @@ def save_fixed_sample(model, dataset, epoch, save_path, device):
         # 모델 추론
         OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, True)
         
-        XYZ_multi = OUTPUTS['XYZ']
-        D_multi = OUTPUTS['D']
-        MATRIX = OUTPUTS['MATRIX']
-        MATRIX_INV = OUTPUTS['MATRIX_INV']
+        if version==1:
+            CURR_XYZ = OUTPUTS['XYZ'][1]
+            
+            PREV_D = OUTPUTS['D'][0]
+            CURR_D = OUTPUTS['D'][1]
+            NEXT_D = OUTPUTS['D'][2]
+            
+            PREV_MATRIX, NEXT_MATRIX = OUTPUTS['MATRIX'][0], OUTPUTS['MATRIX'][1]
+            
+        elif version==2:
+            XYZ_multi = OUTPUTS['XYZ']
+            D_multi = OUTPUTS['D']
+            MATRIX = OUTPUTS['MATRIX']
+            MATRIX_INV = OUTPUTS['MATRIX_INV']
 
-        PREV_XYZ, CURR_XYZ, NEXT_XYZ = XYZ_multi[3][0], XYZ_multi[3][1], XYZ_multi[3][2]
-        PREV_D, CURR_D, NEXT_D = D_multi[3][0], D_multi[3][1], D_multi[3][2]
-        
-        PREV_MATRIX, NEXT_MATRIX = MATRIX[0], MATRIX[1]
+            PREV_XYZ, CURR_XYZ, NEXT_XYZ = XYZ_multi[3][0], XYZ_multi[3][1], XYZ_multi[3][2]
+            PREV_D, CURR_D, NEXT_D = D_multi[3][0], D_multi[3][1], D_multi[3][2]
+            
+            PREV_MATRIX, NEXT_MATRIX = MATRIX[0], MATRIX[1]
 
         # 재투영 이미지 생성
         projected_img_p2c, _ = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)

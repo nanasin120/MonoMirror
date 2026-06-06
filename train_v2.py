@@ -10,6 +10,48 @@ from utils.Loss import Minimum_Reprojection_Loss, Smooth_Loss, Edge_Aware_Smooth
 from utils.Loss import Disparity_Loss, U3Frame_Loss, Mask_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss, Pose_Consistency_Loss
 import os
 import time
+from collections import defaultdict
+from torch.optim import Optimizer
+
+class Lookahead(Optimizer):
+    def __init__(self, optimizer, k=5, alpha=0.5):
+        """
+        optimizer: 사용하는 옵티마이저 (AdamW)
+        k: 덮어씌우는 빈도
+        alpha: 덮어씌우는 정도
+        """
+        self.optimizer = optimizer
+        self.k = k
+        self.alpha = alpha
+        self.param_groups = self.optimizer.param_groups
+        self.state = defaultdict(dict)
+        self.fast_state = self.optimizer.state
+        
+        for group in self.param_groups:
+            group["counter"] = 0
+    def update(self, group):
+        for fast in group["params"]:
+            param_state = self.state[fast]
+            if "slow_param" not in param_state:
+                param_state["slow_param"] = torch.zeros_like(fast.data)
+                param_state["slow_param"].copy_(fast.data)
+            
+            slow = param_state["slow_param"]
+            slow += (fast.data - slow) * self.alpha # 기존 + (현재 - 기존) * alpha
+            fast.data.copy_(slow) # 덮어씌우기
+
+    def step(self, closure=None):
+        loss = self.optimizer.step(closure)
+        for group in self.param_groups:
+            if group["counter"] == 0:
+                self.update(group)
+            group["counter"] += 1
+            if group["counter"] >= self.k:
+                group["counter"] = 0
+        return loss
+    
+    def zero_grad(self):
+        self.optimizer.zero_grad()
 
 model_save_path = r'./save/model_save'
 if not os.path.exists(model_save_path): os.makedirs(model_save_path)
@@ -51,7 +93,9 @@ criterion_feature_reprojection = Feature_Reprojection_Loss().to(DEVICE)
 criterion_rgb_reprojection = RGB_Reprojection_Loss().to(DEVICE)
 criterion_pose_consistency_loss = Pose_Consistency_Loss().to(DEVICE)
 
-optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
+base_optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
+optimizer = Lookahead(base_optimizer, k=5, alpha=0.5)
+
 # scheduler = CosineAnnealingWarmRestarts(
 #     optimizer,
 #     T_0=10,
@@ -59,15 +103,15 @@ optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
 #     eta_min=1e-6
 # )
 
-scheduler = OneCycleLR(
-    optimizer,
-    max_lr=LEARNING_RATE,
-    steps_per_epoch=len(dataloader),
-    epochs=ADDITIONAL_EPOCH,
-    pct_start=0.05, # 5%동안 warm up
-    div_factor=25.0, # max_lr / 25로 시작
-    final_div_factor=1000.0 # 마지막 학습률은 max_lr / 1000.0
-)
+# scheduler = OneCycleLR(
+#     optimizer,
+#     max_lr=LEARNING_RATE,
+#     steps_per_epoch=len(dataloader),
+#     epochs=ADDITIONAL_EPOCH,
+#     pct_start=0.05, # 5%동안 warm up
+#     div_factor=25.0, # max_lr / 25로 시작
+#     final_div_factor=1000.0 # 마지막 학습률은 max_lr / 1000.0
+# )
 
 def train():
     print('TRAIN START')
@@ -167,8 +211,6 @@ def train():
             total_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
-            
-            scheduler.step()
 
             if batch_idx % 10 == 0:
                 batch_end_time = time.time()
@@ -200,8 +242,7 @@ def train():
             print(f'Saved : {model_save_path}')
 
         if epoch % IMAGE_SAVE_INTERVEL == 0:
-
-            save_fixed_sample(model, full_dataset, epoch, img_save_path, DEVICE)
+            save_fixed_sample(model, full_dataset, epoch, img_save_path, DEVICE, 2)
 
         if avg_train_loss < best_avg_loss:
             best_avg_loss = avg_train_loss
