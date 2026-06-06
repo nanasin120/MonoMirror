@@ -286,3 +286,85 @@ if epoch < 50:
 가장 큰 변화는 monodepth2처럼 낮은 해상도의 깊이도 손실함수에 사용한다는 점이다.
 
 물론 지금도 계속해서 터져나가고있다.
+
+## 2026-06-06 2358 진행상태
+
+낮은 해상도 깊이는 빼버렸다. 저걸로하니까 더 빨리 터진다. 대신 다른 변화를 주었다.
+
+```
+class Lookahead(Optimizer):
+    def __init__(self, optimizer, k=5, alpha=0.5):
+        """
+        optimizer: 사용하는 옵티마이저 (AdamW)
+        k: 덮어씌우는 빈도
+        alpha: 덮어씌우는 정도
+        """
+        self.optimizer = optimizer
+        self.k = k
+        self.alpha = alpha
+        self.param_groups = self.optimizer.param_groups
+        self.state = defaultdict(dict)
+        self.fast_state = self.optimizer.state
+        
+        for group in self.param_groups:
+            group["counter"] = 0
+    def update(self, group):
+        for fast in group["params"]:
+            param_state = self.state[fast]
+            if "slow_param" not in param_state:
+                param_state["slow_param"] = torch.zeros_like(fast.data)
+                param_state["slow_param"].copy_(fast.data)
+            
+            slow = param_state["slow_param"]
+            slow += (fast.data - slow) * self.alpha # 기존 + (현재 - 기존) * alpha
+            fast.data.copy_(slow) # 덮어씌우기
+
+    def step(self, closure=None):
+        loss = self.optimizer.step(closure)
+        for group in self.param_groups:
+            if group["counter"] == 0:
+                self.update(group)
+            group["counter"] += 1
+            if group["counter"] >= self.k:
+                group["counter"] = 0
+        return loss
+    
+    def zero_grad(self):
+        self.optimizer.zero_grad()
+```
+
+이거 추가했다. 기존에는 갑자기 2 에포크 돌았는데 갑자기 터지고 이런게 많았다.
+
+그러다 유튜브에서 DINO를 봤는데 학습량의 대충 0.01을 추가하고 기존꺼는 0.99남기고 이런식으로 학습을 했다고 한다. 나도 적용시켜봤다.
+
+학습률은 1e-5로. 또 갑자기 터질까봐.
+
+<img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/7ac39950-47e8-410b-9a11-87aa6581a9de" />
+
+중간까지는 잘 되었는데 갑자기 저렇게 되어버렸다. 참 슬프다.
+
+```
+==> Epoch 140 완료 Train Loss : 0.4866 Train Reproj Loss : 0.3725 Train RGB Loss : 0.082774 Train Smooth Loss : 0.0278 Train Consist Loss : 0.029877 Time : 11.3070
+Saved : ./save/model_save
+--- [Fixed Sample Monitoring] ---
+True fx: 150.69, True fy: 150.67
+K : 
+tensor([[[150.6912,   0.0000, 112.0000],
+         [  0.0000, 150.6703, 112.0000],
+         [  0.0000,   0.0000,   1.0000]]], device='cuda:0')
+E_CURR_PREV : 
+tensor([[[ 1.0000e+00, -2.1368e-05,  7.7823e-05, -2.9803e-01],
+         [ 2.1368e-05,  1.0000e+00,  2.0129e-05,  3.2271e-02],
+         [-7.7823e-05, -2.0129e-05,  1.0000e+00,  1.6696e-02],
+         [ 0.0000e+00,  0.0000e+00,  0.0000e+00,  1.0000e+00]]],
+       device='cuda:0')
+E_CURR_NEXT : 
+tensor([[[ 1.0000e+00, -2.6040e-05,  1.2506e-04, -2.9558e-01],
+         [ 2.6040e-05,  1.0000e+00, -7.2606e-05, -3.7213e-02],
+         [-1.2506e-04,  7.2606e-05,  1.0000e+00,  3.6969e-02],
+         [ 0.0000e+00,  0.0000e+00,  0.0000e+00,  1.0000e+00]]],
+       device='cuda:0')
+Z min: 0.1604, Z max: 5.2419, 갭: 5.0814
+```
+
+보면 E에서 이동부분의 x가 거의 똑같다. 저러면 안되는거 아닌가 싶다.
