@@ -368,3 +368,27 @@ Z min: 0.1604, Z max: 5.2419, 갭: 5.0814
 ```
 
 보면 E에서 이동부분의 x가 거의 똑같다. 저러면 안되는거 아닌가 싶다.
+
+## 2026-06-07 1815 진행상태
+
+어제 계속해서 봤을때 가장 문제라 생각한게 E이다. 너무 움직이지를 않는것 같았다.
+
+그래서 형식을 바꿨다. VoxFormer에서 아이디어를 가져왔다.
+
+```
+translation_dir = F.normalize(extrinsic_raw[:, 3:6], p=2, dim=-1) # 이동 방향 [B, 3]
+anchors = torch.tensor([0.05, 0.1, 0.2, 0.4, 0.8], dtype=torch.float32, device=F1.device) # 간격 [B, 5]
+
+scale_logits = extrinsic_raw[:, 6:11] # [B, 5]
+scale_probs = F.softmax(scale_logits, dim=-1) # [B, 5]
+
+magnitude = torch.sum(scale_probs * anchors, dim=-1, keepdim=True) # [B, 1]
+
+translation = translation_dir * magnitude # [B, 3]
+```
+
+이전에는 x, y, z를 바로 예측했다면 지금은 방향, 크기 이렇게 예측한다.
+
+이렇게 한 이유는 이전의 tanh를 이용한 움직임대신 더 빠르게 갑작스러운 움직임을 보이고 싶었기 때문이다.
+
+일단 이번주는 절대로 학습을 못하니 다음주부터 할 수 있다. 그 전까지는 계속 새로운 방식을 생각해봐야할것 같다.
