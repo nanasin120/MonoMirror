@@ -2,7 +2,7 @@ import torch
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from models.MonoMirror_v1 import MonoMirror_v1
+from models.MonoMirror_v1_5 import MonoMirror_v1_5
 from data.ImageDataset import ImageDataset
 from defs import get_projected_image, load_croco_weights_to_dust3r, save_fixed_sample
 from utils.Loss import Edge_Aware_Smooth_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss, Pose_Consistency_Loss
@@ -60,7 +60,7 @@ BATCH = 2
 START_EPOCH = 0
 END_EPOCH = 500
 ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
-LEARNING_RATE = 5e-5 # 1e-4에서 좀 낮춤
+LEARNING_RATE = 1e-4 # 1e-4에서 좀 낮춤
 IMAGE_SAVE_INTERVEL = 5
 WEIGHT_SAVE_INTERVEL = 20
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -76,7 +76,7 @@ dataloader = DataLoader(
     pin_memory=True
 )
 
-model = MonoMirror_v1().to(DEVICE)
+model = MonoMirror_v1_5().to(DEVICE)
 # model.load_state_dict(torch.load(r'save\model_save\model_epoch_80.pth', weights_only=True))
 load_croco_weights_to_dust3r(model, r'./weights/croco_epoch_150.pth')
 
