@@ -426,3 +426,37 @@ Z min: 0.1434, Z max: 9.2924, 갭: 9.1490
 fx와 fy가 심각하게 차이난다. 150과 190은 이해가 전혀 가지 않는다.
 
 LR을 1e-5로 줄이고 LookAhead를 빼고 한번 진행해봐야겠다.
+
+## 2026-06-11 1124 진행상태
+
+```
+==> Epoch 269 완료 Train Loss : 0.7942 Train Reproj Loss : 0.3109 Train RGB Loss : 0.074743 Train Smooth Loss : 0.0325 Train Consist Loss : 0.021236 Time : 22.5890
+New Best Model Saved! Loss : 0.7942
+Epoch [270/500] Batch [0/17] Loss_total : 0.8159 Time : 1.1765
+Epoch [270/500] Batch [10/17] Loss_total : 0.9249 Time : 13.3414
+==> Epoch 270 완료 Train Loss : 0.8016 Train Reproj Loss : 0.3140 Train RGB Loss : 0.075316 Train Smooth Loss : 0.0325 Train Consist Loss : 0.021353 Time : 22.8483
+--- [Fixed Sample Monitoring] ---
+True fx: 150.73, True fy: 150.83
+K : 
+tensor([[[150.7349,   0.0000, 112.0000],
+         [  0.0000, 150.8305, 112.0000],
+         [  0.0000,   0.0000,   1.0000]]], device='cuda:0')
+E_CURR_PREV : 
+tensor([[[ 0.9992, -0.0061,  0.0402, -0.1761],
+         [ 0.0074,  0.9995, -0.0322,  0.0102],
+         [-0.0400,  0.0324,  0.9987,  0.0389],
+         [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+E_CURR_NEXT : 
+tensor([[[ 9.9788e-01, -1.5539e-03,  6.5131e-02, -1.4576e-01],
+         [-8.7840e-04,  9.9930e-01,  3.7300e-02,  1.7667e-02],
+         [-6.5144e-02, -3.7278e-02,  9.9718e-01, -3.5376e-02],
+         [ 0.0000e+00,  0.0000e+00,  0.0000e+00,  1.0000e+00]]],
+       device='cuda:0')
+Z min: 0.1019, Z max: 9.1510, 갭: 9.0491
+```
+
+<img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/24ba4281-1cde-4f2d-be56-b51a51becb21" />
+
+이렇게 구글 코랩에서 돌리니까 오랫동안 학습시킬 수 있어서 좋다. 이전에는 100번 정도만 해도 노트북 녹아내릴거같았는데 말이다.
+
+하지만 학습은 잘 안됐다. smooth loss를 높여볼 생각이다.
