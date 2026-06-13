@@ -22,34 +22,28 @@ def save_fixed_sample(model, dataset, epoch, save_path, device, version):
         # 모델 추론
         OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, True)
         
-        if version==1:
-            CURR_XYZ = OUTPUTS['XYZ'][1]
-            
-            PREV_D = OUTPUTS['D'][0]
-            CURR_D = OUTPUTS['D'][1]
-            NEXT_D = OUTPUTS['D'][2]
-            
-            PREV_MATRIX, NEXT_MATRIX = OUTPUTS['MATRIX'][0], OUTPUTS['MATRIX'][1]
-            
-        elif version==2:
-            XYZ_multi = OUTPUTS['XYZ']
-            D_multi = OUTPUTS['D']
-            MATRIX = OUTPUTS['MATRIX']
-            MATRIX_INV = OUTPUTS['MATRIX_INV']
-
-            PREV_XYZ, CURR_XYZ, NEXT_XYZ = XYZ_multi[3][0], XYZ_multi[3][1], XYZ_multi[3][2]
-            PREV_D, CURR_D, NEXT_D = D_multi[3][0], D_multi[3][1], D_multi[3][2]
-            
-            PREV_MATRIX, NEXT_MATRIX = MATRIX[0], MATRIX[1]
+        # ==========================================================
+        # [핵심 수정] version 분기 삭제 및 D -> DISP 이름 변경
+        # 더 이상 4단계 multi 변수가 없으므로 깔끔하게 바로 꺼냅니다.
+        # ==========================================================
+        CURR_XYZ = OUTPUTS['XYZ'][1]
+        
+        PREV_DISP = OUTPUTS['DISP'][0]
+        CURR_DISP = OUTPUTS['DISP'][1]
+        NEXT_DISP = OUTPUTS['DISP'][2]
+        
+        PREV_MATRIX, NEXT_MATRIX = OUTPUTS['MATRIX'][0], OUTPUTS['MATRIX'][1]
 
         # 재투영 이미지 생성
         projected_img_p2c, _ = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
         projected_img_n2c, _ = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
 
-        viz_d_prev = get_depth_viz(PREV_D, prev_image_vis)
-        viz_d_curr = get_depth_viz(CURR_D, curr_image_vis)
-        viz_d_next = get_depth_viz(NEXT_D, next_image_vis)
+        # 깊이(시차) 시각화 텐서 생성
+        viz_d_prev = get_depth_viz(PREV_DISP, prev_image_vis)
+        viz_d_curr = get_depth_viz(CURR_DISP, curr_image_vis)
+        viz_d_next = get_depth_viz(NEXT_DISP, next_image_vis)
 
+        # 3x3 그리드 생성
         row1 = torch.cat([prev_image_vis[0], curr_image_vis[0], next_image_vis[0]], dim=2) 
         row2 = torch.cat([viz_d_prev[0], viz_d_curr[0], viz_d_next[0]], dim=2)
         row3 = torch.cat([projected_img_p2c[0], curr_image_vis[0], projected_img_n2c[0]], dim=2)

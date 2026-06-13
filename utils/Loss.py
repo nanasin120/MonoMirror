@@ -113,13 +113,16 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
         weight_x = torch.exp(-img_dx * 10.0)
         weight_y = torch.exp(-img_dy * 10.0)
 
+        pad_mask = (img.sum(dim=1, keepdim=True) > 0).float()
+        mask_x = pad_mask[:, :, :, :-1] * pad_mask[:, :, :, 1:]
+        mask_y = pad_mask[:, :, :-1, :] * pad_mask[:, :, 1:, :]
+
         # 최종 Loss 계산
         # [B, 1, H, W-1], [B, 1, H-1, W]
-        smoothness_x = disp_dx * weight_x
-        smoothness_y = disp_dy * weight_y
+        smoothness_x = disp_dx * weight_x * mask_x
+        smoothness_y = disp_dy * weight_y * mask_y
 
-        # [1]
-        return smoothness_x.mean() + smoothness_y.mean()
+        return (smoothness_x.sum() + smoothness_y.sum()) / (mask_x.sum() + mask_y.sum() + 1e-8)
 
 class SSIM(nn.Module): # 두 이미지가 얼마나 비슷한가
     def __init__(self, window_size = 3, C1 = 0.01 ** 2, C2 = 0.03 ** 2):
@@ -137,8 +140,8 @@ class SSIM(nn.Module): # 두 이미지가 얼마나 비슷한가
         # pad를 통해 이미지 상하좌우에 p만큼 확장
         # 거울처럼 이미지 끝이 1, 2, 3, 4라면 1, 2, 3, 4, 3, 2, 1 이렇게 확장함
         # 이를 통해 avg이후에도 크기가 안줄음
-        x = F.pad(x, (p, p, p, p), mode='reflect') 
-        y = F.pad(y, (p, p, p, p), mode='reflect')
+        x = F.pad(x, (p, p, p, p), mode='replicate') 
+        y = F.pad(y, (p, p, p, p), mode='replicate')
 
         # mu는 밝기 
         # avg_pool2d는 이미지에 윈도우를 두고 그 안의 모든 수의 평균을 구함
@@ -266,14 +269,11 @@ class U3Frame_Loss(nn.Module): # 이전, 현재, 이후 를 이용한 재투영 
         # 광도 오차와 원본 오차를 합친 최종 오차 완성
         final_min_pe = torch.minimum(min_pe_temporal, min_pe_source)
 
-        # 원본간의 차이가 얼마 없기에 원본 오차는 제거
-        # final_min_pe = min_pe_temporal
-
         # 이전에 재투영 할떄 나온 mask 합치기
         valid_mask_any = mask_p2c.bool() | mask_n2c.bool()
 
         # 재투영 mask + 배경 mask 합치기
-        total_mask = valid_mask_any.float() * bg_mask
+        total_mask = valid_mask_any.float()
 
         # 최종 Loss = (광도 오차 + 원본 오차) * (재투영 mask + 배경 mask)
         loss = final_min_pe * total_mask

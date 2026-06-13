@@ -2,7 +2,7 @@ import torch
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from models.MonoMirror_v1_5 import MonoMirror_v1_5
+from models.MonoMirror_v3 import MonoMirror_v3
 from data.ImageDataset import ImageDataset
 from defs import get_projected_image, load_croco_weights_to_dust3r, save_fixed_sample
 from utils.Loss import Edge_Aware_Smooth_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss, Pose_Consistency_Loss
@@ -65,8 +65,8 @@ IMAGE_SAVE_INTERVEL = 5
 WEIGHT_SAVE_INTERVEL = 20
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# img_dir = r'./dataset/cup_dataset'
-# feat_dir = r'./dataset/dino_features'
+img_dir = r'./dataset/cup_dataset'
+feat_dir = r'./dataset/dino_features'
 img_dir = r'/content/data_local'
 feat_dir = r'/content/feature_local'
 full_dataset = ImageDataset(img_dir=img_dir, feat_dir=feat_dir, frame_interval=3)
@@ -78,9 +78,7 @@ dataloader = DataLoader(
     pin_memory=True
 )
 
-model = MonoMirror_v1_5().to(DEVICE)
-# model.load_state_dict(torch.load(r'save\model_save\model_epoch_80.pth', weights_only=True))
-load_croco_weights_to_dust3r(model, r'./weights/croco_epoch_150.pth')
+model = MonoMirror_v3().to(DEVICE)
 
 criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
 criterion_feature_reprojection = Feature_Reprojection_Loss().to(DEVICE)
@@ -91,16 +89,21 @@ backbone_params = []
 head_params = []
 
 for name, param in model.named_parameters():
-    if "CroCo_Encoder" in name: 
+    if not param.requires_grad:
+        continue
+        
+    if "encoder" in name:
         backbone_params.append(param)
     else:
         head_params.append(param)
 
-base_optimizer = optim.AdamW([
-    {'params': backbone_params, 'lr': 1e-5}, 
-    {'params': head_params, 'lr': 1e-4}      
-], weight_decay=1e-4)
+optim_groups = [{'params': head_params, 'lr': 1e-4}]
+if len(backbone_params) > 0:
+    optim_groups.append({'params': backbone_params, 'lr': 1e-5})
 
+base_optimizer = optim.AdamW(optim_groups, weight_decay=1e-4)
+
+# optimizer = optim.AdamW(optim_groups, weight_decay=1e-4)
 # optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
 optimizer = Lookahead(base_optimizer, k=5, alpha=0.5)
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer.optimizer, T_max=ADDITIONAL_EPOCH, eta_min=1e-6)
@@ -128,62 +131,50 @@ def train():
             curr_image_model = batch['curr_image_model'].to(DEVICE)
             next_image_model = batch['next_image_model'].to(DEVICE)
 
-            prev_feature = batch['prev_feature'].to(DEVICE)
-            curr_feature = batch['curr_feature'].to(DEVICE)
-            next_feature = batch['next_feature'].to(DEVICE)
-
             OUTPUTS = model(prev_image_model, curr_image_model, next_image_model)
 
-            CURR_XYZ = OUTPUTS['XYZ'][1]
+            prev_feature = OUTPUTS['F_FROZEN'][0]
+            curr_feature = OUTPUTS['F_FROZEN'][1]
+            next_feature = OUTPUTS['F_FROZEN'][2]
             
-            PREV_D = OUTPUTS['D'][0]
-            CURR_D = OUTPUTS['D'][1]
-            NEXT_D = OUTPUTS['D'][2]
-            
+            # 2. 포즈 매트릭스 가져오기
             PREV_MATRIX, NEXT_MATRIX = OUTPUTS['MATRIX'][0], OUTPUTS['MATRIX'][1]
 
-            # -----------------------------------------
-            # [1] 특징(Feature) 재투영
-            # -----------------------------------------
-            projected_img_p2c, valid_mask_p2c = get_projected_image(curr_feature, prev_feature, CURR_XYZ, PREV_MATRIX)
-            projected_img_n2c, valid_mask_n2c = get_projected_image(curr_feature, next_feature, CURR_XYZ, NEXT_MATRIX)
+            # 3. 모델이 계산해준 깔끔한 현재 프레임의 3D 포인트 클라우드 [B, 50176, 3] 가져오기!
+            CURR_XYZ = OUTPUTS['XYZ'][1]
 
-            loss_reproj = criterion_feature_reprojection(curr_feature, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c)
-
-            # -----------------------------------------
-            # [2] RGB 재투영 오차
-            # -----------------------------------------
-            proj_img_prev, mask_img_prev = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
-            proj_img_next, mask_img_next = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
+            # -------------------------------------------------------------------
+            # 투영 및 Loss 계산 (이전과 동일)
+            # -------------------------------------------------------------------
+            proj_feat_p2c, mask_feat_p2c = get_projected_image(curr_feature, prev_feature, CURR_XYZ, PREV_MATRIX)
+            proj_feat_n2c, mask_feat_n2c = get_projected_image(curr_feature, next_feature, CURR_XYZ, NEXT_MATRIX)
             
-            loss_rgb_reproj = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_img_prev, mask_img_prev, proj_img_next, mask_img_next)
+            proj_rgb_prev, mask_rgb_prev = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
+            proj_rgb_next, mask_rgb_next = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
 
-            # -----------------------------------------
-            # [3] 스무스(Smooth) 오차
-            # -----------------------------------------
-            loss_smoothloss_1 = criterion_edge_smooth(PREV_D, prev_image_vis)
-            loss_smoothloss_2 = criterion_edge_smooth(CURR_D, curr_image_vis)
-            loss_smoothloss_3 = criterion_edge_smooth(NEXT_D, next_image_vis)
-            loss_smoothloss = (loss_smoothloss_1 + loss_smoothloss_2 + loss_smoothloss_3) / 3.0
+            valid_p = mask_feat_p2c # 검은색 픽셀 버그 원천 차단
+            valid_n = mask_feat_n2c
 
-            # -----------------------------------------
-            # [4] 포즈 일관성(Consistency) 오차
-            # -----------------------------------------
+            loss_reproj = criterion_feature_reprojection(curr_feature, proj_feat_p2c, valid_p, proj_feat_n2c, valid_n)
+            loss_rgb_reproj = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev, valid_p, proj_rgb_next, valid_n)
+
+            # -------------------------------------------------------------------
+            # 나머지 Loss 계산 (이름만 D -> DISP로 변경)
+            # -------------------------------------------------------------------
+            loss_smooth_1 = criterion_edge_smooth(OUTPUTS['DISP'][0], prev_image_vis)
+            loss_smooth_2 = criterion_edge_smooth(OUTPUTS['DISP'][1], curr_image_vis)
+            loss_smooth_3 = criterion_edge_smooth(OUTPUTS['DISP'][2], next_image_vis)
+            loss_smoothloss = (loss_smooth_1 + loss_smooth_2 + loss_smooth_3) / 3.0
+
             loss_consist_prev = criterion_pose_consistency_loss(OUTPUTS['E'][0], OUTPUTS['E_INV'][0])
             loss_consist_next = criterion_pose_consistency_loss(OUTPUTS['E'][1], OUTPUTS['E_INV'][1])
             loss_consist = (loss_consist_prev + loss_consist_next) / 2.0
 
+            # 가중치 설정
             weight_reproj = 1.0
             weight_rgb = 1.0
-            weight_smooth = 0.01
-            weight_consist = 1.0
-
-            if epoch < 50:
-                weight_smooth = 0.01
-            elif epoch < 150:
-                weight_smooth = 0.05
-            else:
-                weight_smooth = 0.1
+            weight_consist = 0.0
+            weight_smooth = 0.1
             
             total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + (loss_consist * weight_consist)
 
