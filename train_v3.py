@@ -106,7 +106,8 @@ base_optimizer = optim.AdamW(optim_groups, weight_decay=1e-4)
 # optimizer = optim.AdamW(optim_groups, weight_decay=1e-4)
 # optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
 optimizer = Lookahead(base_optimizer, k=5, alpha=0.5)
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer.optimizer, T_max=ADDITIONAL_EPOCH, eta_min=1e-6)
+# scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer.optimizer, T_max=ADDITIONAL_EPOCH, eta_min=1e-6)
+scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer.optimizer, T_0=50, T_mult=1, eta_min=1e-6)
 
 def train():
     print('TRAIN START')

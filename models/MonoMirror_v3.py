@@ -62,14 +62,16 @@ class DepthHead(nn.Module):
         out = self.MLP(all_G) # [B, 1, 224, 224]
 
         disp_raw = torch.sigmoid(out) # 0 ~ 1
-        min_disp = 0.1 # 100
-        max_disp = 10.0 # 0.1
+        min_disp = 0.4 # 2.5
+        max_disp = 5.0 # 0.2
         
         # disp_raw가 0이면 0.01, 1이면 10.0
         # 0.1 ~ 10.0
         scaled_disp = min_disp + (max_disp - min_disp) * disp_raw 
         
         # disp_raw가 0이면 1/0.01 = 100, 1이면 1/10 = 0.1
+        # 1 / min_disp 아니면
+        # 1 / max_disp 이거임
         # 0.1 ~ 100.0
         Z_coord_safe = 1.0 / scaled_disp 
 
