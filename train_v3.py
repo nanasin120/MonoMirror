@@ -56,7 +56,7 @@ if not os.path.exists(model_save_path): os.makedirs(model_save_path)
 img_save_path = r'./save/image_save'
 if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
-BATCH = 2
+BATCH = 4
 START_EPOCH = 0
 END_EPOCH = 500
 ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
@@ -65,7 +65,7 @@ IMAGE_SAVE_INTERVEL = 5
 WEIGHT_SAVE_INTERVEL = 20
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-img_dir = r'./dataset/cup_dataset'
+img_dir = r'./dataset/laptop_dataset'
 feat_dir = r'./dataset/dino_features'
 img_dir = r'/content/data_local'
 feat_dir = r'/content/feature_local'
@@ -173,8 +173,8 @@ def train():
             # 가중치 설정
             weight_reproj = 1.0
             weight_rgb = 1.0
-            weight_consist = 0.0
-            weight_smooth = 0.1
+            weight_consist = 0.01
+            weight_smooth = 0.01
             
             total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + (loss_consist * weight_consist)
 
