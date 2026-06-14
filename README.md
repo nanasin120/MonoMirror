@@ -30,8 +30,16 @@ Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연�
   - Edge-Aware Smooth Loss (Weight: 0.05): Depth가 부드러운 평면을 유지하되, 물체의 경계선 입체감은 보존
 - Optimizer & Scheduler: AdamW(LR: 1e-4) + CosineAnnealingLR (Min LR: 1e-6)
 
-## 진행 상태 [바로가기](./docs/DEVLOG.md)
+## 진행 상태 [바로가기](./docs/DEVLOG/DEVLOGv3.md)
 진행 상태 기록
 
 ## 문제 해결 기록 [바로가기](./docs/TROUBLESHOODING.md)
 문제 해결 기록
+
+---
+
+# 최신 상태
+
+<img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/9a4833ef-ae67-4955-8f53-f60cc960cc82" />
+
+자판의 디테일은 잘 나오지만 특유의 물결과 같은 깊이가 나오는 문제가 있다.
