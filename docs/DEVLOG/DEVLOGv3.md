@@ -90,3 +90,80 @@ MonoMirror 아키텍처 개발 및 학습 파이프라인 구축 과정 기록
   하지만 현재도 그리 좋은 상태가 아니다. 나는 아직 배가 고프다.
   
 </details>
+
+<details>
+  <summary>
+    2026-06-14 2248 진행상태
+  </summary>
+  
+  초점 거리를 213.0에서 315.0으로 변경했다.
+
+  <img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/7d0f94d5-21d2-4845-9c20-e301e0cc72ce" />
+
+  ```
+  ==> Epoch 500 완료 Train Loss : 0.4131 Train Reproj Loss : 0.3433 Train RGB Loss : 0.069020 Train Smooth Loss : 0.0251 Train Consist Loss : 0.044181 Time : 7.2417
+  Saved : ./save/model_save
+  --- [Fixed Sample Monitoring] ---
+  True fx: 315.00, True fy: 315.00
+  K : 
+  tensor([[[315.,   0., 112.],
+           [  0., 315., 112.],
+           [  0.,   0.,   1.]]], device='cuda:0')
+  E_CURR_PREV : 
+  tensor([[[ 0.9988,  0.0310, -0.0383,  0.0354],
+           [-0.0266,  0.9935,  0.1105, -0.0400],
+           [ 0.0415, -0.1094,  0.9931,  0.0092],
+           [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+  E_CURR_NEXT : 
+  tensor([[[ 0.9840,  0.0571, -0.1687,  0.0577],
+           [-0.0682,  0.9958, -0.0605, -0.0088],
+           [ 0.1645,  0.0710,  0.9838, -0.0026],
+           [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+  Z min: 0.1256, Z max: 9.9973, 갭: 9.8717
+  ---------------------------------
+  ```
+
+  보면 그리 좋지는 않다. 일단 디테일들은 어느정도 살아있는게 보이지만 깊이가 깔끔하지가 않다.
+
+  게다가 맨 마지막것을 보면 깊이가 마치 물결처럼 나와있는것이 보인다. 
+
+</details>
+
+<details>
+  <summary>
+    2026-06-15 0010 진행상태
+  </summary>
+  
+  스케쥴러를 CosineAnnealingWarmRestarts로 변경해 50 에포크마다 학습량을 되돌렸다. 이것이 loss의 정체를 부셔줄거라 믿었다.
+
+  depth의 범위를 0.2 ~ 2.5로 바꿨다.
+
+  <img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/5ae26e9b-66cc-43ab-8e0d-b5ffc6ea2d3b" />
+  
+  ```
+  ==> Epoch 500 완료 Train Loss : 0.4234 Train Reproj Loss : 0.3486 Train RGB Loss : 0.074097 Train Smooth Loss : 0.0195 Train Consist Loss : 0.052744 Time : 7.2686
+  Saved : ./save/model_save
+  --- [Fixed Sample Monitoring] ---
+  True fx: 315.00, True fy: 315.00
+  K : 
+  tensor([[[315.,   0., 112.],
+           [  0., 315., 112.],
+           [  0.,   0.,   1.]]], device='cuda:0')
+  E_CURR_PREV : 
+  tensor([[[ 0.9972,  0.0545, -0.0508,  0.0581],
+           [-0.0470,  0.9892,  0.1388, -0.0725],
+           [ 0.0578, -0.1360,  0.9890,  0.0125],
+           [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+  E_CURR_NEXT : 
+  tensor([[[ 0.9761,  0.0715, -0.2052,  0.1000],
+           [-0.0877,  0.9936, -0.0706, -0.0087],
+           [ 0.1989,  0.0869,  0.9762, -0.0038],
+           [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+  Z min: 0.2058, Z max: 2.4998, 갭: 2.2940
+  ---------------------------------
+  ```
+
+  저 물결은 사라지지를 않고 loss또한 0.4에서 내려가지를 않는다. 디테일은 잘 잡히는거 같은데 저런 부분이 아직 부족하다.
+
+</details>
+
