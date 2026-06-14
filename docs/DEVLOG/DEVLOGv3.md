@@ -46,10 +46,8 @@ MonoMirror 아키텍처 개발 및 학습 파이프라인 구축 과정 기록
 ---
 
 <details>
-  <summary style="cursor: pointer; outline: none;">
-    <span style="font-size: 1.5em; font-weight: bold; vertical-align: middle;">
-      2026-06-14 2114 진행상태
-    </span>
+  <summary>
+    2026-06-14 2114 진행상태
   </summary>
   
   일단 크게 보면 세가지가 변형되었다.
@@ -62,5 +60,33 @@ MonoMirror 아키텍처 개발 및 학습 파이프라인 구축 과정 기록
 
   MonoMirror는 Encoder를 DINOv2로 변경하였다. 이에 따라 다른 세부적인 것들도 변경되었다.
 
+  <img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/2ebe99da-ea8d-45e3-8c77-ab8e82dc1a7f" />
+
+  ```
+  ==> Epoch 500 완료 Train Loss : 0.4129 Train Reproj Loss : 0.3450 Train RGB Loss : 0.067034 Train Smooth Loss : 0.0247 Train Consist Loss : 0.058113 Time : 7.1830
+  Saved : ./save/model_save
+  --- [Fixed Sample Monitoring] ---
+  True fx: 213.00, True fy: 213.00
+  K : 
+  tensor([[[213.,   0., 112.],
+           [  0., 213., 112.],
+           [  0.,   0.,   1.]]], device='cuda:0')
+  E_CURR_PREV : 
+  tensor([[[ 0.9971,  0.0539, -0.0533,  0.0548],
+           [-0.0438,  0.9837,  0.1745, -0.0662],
+           [ 0.0618, -0.1717,  0.9832,  0.0093],
+           [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+  E_CURR_NEXT : 
+  tensor([[[ 0.9980,  0.0571, -0.0267,  0.0293],
+           [-0.0530,  0.9893,  0.1357, -0.0722],
+           [ 0.0341, -0.1340,  0.9904,  0.0021],
+           [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+  Z min: 0.1221, Z max: 9.9885, 갭: 9.8664
+  ---------------------------------
+  ```
+
+  그리고 위에가 현재의 결과이다. 데이터를 노트북으로 바꾼것 하나만으로 이런 결과가 나올것이라곤 예상하지 않았다.
+
+  하지만 현재도 그리 좋은 상태가 아니다. 나는 아직 배가 고프다.
   
 </details>
