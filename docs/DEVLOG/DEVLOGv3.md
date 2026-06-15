@@ -167,3 +167,38 @@ MonoMirror 아키텍처 개발 및 학습 파이프라인 구축 과정 기록
 
 </details>
 
+<details>
+  <summary>
+    2026-06-15 1450 진행상태
+  </summary>
+
+  edge_aware_smooth_loss의 가중치를 0.01에서 0.1로 올렸다. 물결을 없애주길 빌었다.
+
+  <img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/e38f0127-a182-49ad-bf16-b7f83b355650" />
+  
+  ```
+  ==> Epoch 500 완료 Train Loss : 0.4213 Train Reproj Loss : 0.3450 Train RGB Loss : 0.073908 Train Smooth Loss : 0.0168 Train Consist Loss : 0.065460 Time : 7.4473
+  Saved : ./save/model_save
+  --- [Fixed Sample Monitoring] ---
+  True fx: 315.00, True fy: 315.00
+  K : 
+  tensor([[[315.,   0., 112.],
+           [  0., 315., 112.],
+           [  0.,   0.,   1.]]], device='cuda:0')
+  E_CURR_PREV : 
+  tensor([[[ 0.9982,  0.0191, -0.0561,  0.0687],
+           [-0.0106,  0.9887,  0.1493, -0.0802],
+           [ 0.0583, -0.1485,  0.9872,  0.0031],
+           [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+  E_CURR_NEXT : 
+  tensor([[[ 0.9940,  0.1090,  0.0066,  0.0205],
+           [-0.1089,  0.9838,  0.1422, -0.0889],
+           [ 0.0090, -0.1420,  0.9898,  0.0159],
+           [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+  Z min: 0.2214, Z max: 2.4984, 갭: 2.2769
+  ---------------------------------
+  ```
+
+  물결이 안사라진다. 고민고민해보니까 이게 DINOv2가 결국에는 패치 단위로 보는데 그럼 패치별로 또 경계가 생기지 않을까 싶다.
+
+</details>
