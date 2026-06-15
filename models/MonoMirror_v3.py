@@ -48,31 +48,32 @@ class Decoder(nn.Module):
 class DepthHead(nn.Module):
     def __init__(self, in_channel=32):
         super(DepthHead, self).__init__()
-
-        self.MLP = nn.Sequential(
-            nn.Conv2d(in_channels=in_channel, out_channels=in_channel, kernel_size=3, padding=1),
+        
+        # 물결 제거를 목표로 DepthHead 변경
+        self.feature_mixer = nn.Sequential( 
+            nn.Conv2d(in_channels=in_channel, out_channels=in_channel, kernel_size=5, padding=2),
             nn.GELU(),
-            nn.Conv2d(in_channels=in_channel, out_channels=1, kernel_size=1),
+            nn.Conv2d(in_channels=in_channel, out_channels=in_channel, kernel_size=3, padding=1),
+            nn.GELU()
         )
+        self.predictor = nn.Conv2d(in_channels=in_channel, out_channels=1, kernel_size=1)
 
         nn.init.normal_(self.MLP[-1].weight, std=1e-5)
         nn.init.zeros_(self.MLP[-1].bias)
 
     def forward(self, all_G):
-        out = self.MLP(all_G) # [B, 1, 224, 224]
+        mixed_feat = self.feature_mixer(all_G) 
+        
+        out = self.predictor(mixed_feat) # [B, 1, 224, 224]
 
         disp_raw = torch.sigmoid(out) # 0 ~ 1
         min_disp = 0.4 # 2.5
         max_disp = 5.0 # 0.2
         
-        # disp_raw가 0이면 0.01, 1이면 10.0
-        # 0.1 ~ 10.0
         scaled_disp = min_disp + (max_disp - min_disp) * disp_raw 
         
-        # disp_raw가 0이면 1/0.01 = 100, 1이면 1/10 = 0.1
         # 1 / min_disp 아니면
         # 1 / max_disp 이거임
-        # 0.1 ~ 100.0
         Z_coord_safe = 1.0 / scaled_disp 
 
         return Z_coord_safe, scaled_disp

@@ -60,7 +60,7 @@ BATCH = 4
 START_EPOCH = 0
 END_EPOCH = 500
 ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
-LEARNING_RATE = 1e-5 # 1e-4에서 좀 낮춤
+LEARNING_RATE = 1e-4 # 1e-4에서 좀 낮춤
 IMAGE_SAVE_INTERVEL = 5
 WEIGHT_SAVE_INTERVEL = 20
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -85,29 +85,29 @@ criterion_feature_reprojection = Feature_Reprojection_Loss().to(DEVICE)
 criterion_rgb_reprojection = RGB_Reprojection_Loss().to(DEVICE)
 criterion_pose_consistency_loss = Pose_Consistency_Loss().to(DEVICE)
 
-backbone_params = []
-head_params = []
+# backbone_params = []
+# head_params = []
 
-for name, param in model.named_parameters():
-    if not param.requires_grad:
-        continue
+# for name, param in model.named_parameters():
+#     if not param.requires_grad:
+#         continue
         
-    if "encoder" in name:
-        backbone_params.append(param)
-    else:
-        head_params.append(param)
+#     if "encoder" in name:
+#         backbone_params.append(param)
+#     else:
+#         head_params.append(param)
 
-optim_groups = [{'params': head_params, 'lr': 1e-4}]
-if len(backbone_params) > 0:
-    optim_groups.append({'params': backbone_params, 'lr': 1e-5})
+# optim_groups = [{'params': head_params, 'lr': 1e-4}]
+# if len(backbone_params) > 0:
+#     optim_groups.append({'params': backbone_params, 'lr': 1e-5})
 
-base_optimizer = optim.AdamW(optim_groups, weight_decay=1e-4)
+optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
 
 # optimizer = optim.AdamW(optim_groups, weight_decay=1e-4)
 # optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
-optimizer = Lookahead(base_optimizer, k=5, alpha=0.5)
-# scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer.optimizer, T_max=ADDITIONAL_EPOCH, eta_min=1e-6)
-scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer.optimizer, T_0=50, T_mult=1, eta_min=1e-6)
+# optimizer = Lookahead(base_optimizer, k=5, alpha=0.5)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=ADDITIONAL_EPOCH, eta_min=1e-6)
+# scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer.optimizer, T_0=50, T_mult=1, eta_min=1e-6)
 
 def train():
     print('TRAIN START')
@@ -175,7 +175,7 @@ def train():
             weight_reproj = 1.0
             weight_rgb = 1.0
             weight_consist = 0.01
-            weight_smooth = 0.01
+            weight_smooth = 0.1
             
             total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + (loss_consist * weight_consist)
 
