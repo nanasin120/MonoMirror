@@ -58,8 +58,8 @@ class DepthHead(nn.Module):
         )
         self.predictor = nn.Conv2d(in_channels=in_channel, out_channels=1, kernel_size=1)
 
-        nn.init.normal_(self.MLP[-1].weight, std=1e-5)
-        nn.init.zeros_(self.MLP[-1].bias)
+        nn.init.normal_(self.predictor.weight, std=1e-5)
+        nn.init.zeros_(self.predictor.bias)
 
     def forward(self, all_G):
         mixed_feat = self.feature_mixer(all_G) 
@@ -147,8 +147,8 @@ class ProjectionHead(nn.Module):
         B = F1.shape[0]
 
         # DINOv2는 패치가 16x16으로 나옴
-        F1_spatial = F1.permute(0, 2, 1).view(B, -1, 16, 16)
-        F2_spatial = F2.permute(0, 2, 1).view(B, -1, 16, 16)
+        F1_spatial = F1.permute(0, 2, 1).view(B, -1, 14, 14)
+        F2_spatial = F2.permute(0, 2, 1).view(B, -1, 14, 14)
         Diff_spatial = F1_spatial - F2_spatial
 
         combined = torch.cat([F1_spatial, F2_spatial, Diff_spatial], dim=1) # [B, d_model * 2, 16, 16]
@@ -174,92 +174,90 @@ class ProjectionHead(nn.Module):
         E[:, :3, 3] = translation
 
         return E
-    
+
 class FeatureUpsampler(nn.Module):
-    def __init__(self, in_channels=768, out_channels=32): # 768 -> 256 -> 128 -> 64 -> 32
+    def __init__(self, in_channels=768, out_channels=32):
         super(FeatureUpsampler, self).__init__()
-
         self.in_channels = in_channels
-
+        
         self.up1 = nn.Sequential(
-            nn.Upsample(size=(28, 28), mode='bilinear', align_corners=False),
-            nn.Conv2d(in_channels, 256, kernel_size=3, padding=1),
+            nn.ConvTranspose2d(in_channels, 256, kernel_size=4, stride=2, padding=1),
             nn.GroupNorm(num_groups=16, num_channels=256),
             nn.GELU()
         )
-        self.skip1 = nn.Sequential(
-            nn.Conv2d(in_channels, 256, kernel_size=1),
-            nn.Upsample(size=(28, 28), mode='bilinear', align_corners=False),
-        )
-        self.fuse1 = nn.Sequential(nn.Conv2d(768, 256, kernel_size=3, padding=1), nn.GELU())
+        self.skip1 = nn.Sequential(nn.Conv2d(in_channels, 256, kernel_size=1))
+        # 256(up) + 256(skip) + 256(c_28) = 768
+        self.fuse1 = nn.Sequential(nn.Conv2d(768, 256, kernel_size=3, padding=1), nn.GELU()) 
         
+        # 28 -> 56
         self.up2 = nn.Sequential(
-            nn.Upsample(size=(56, 56), mode='bilinear', align_corners=False),
-            nn.Conv2d(256, 128, kernel_size=3, padding=1),
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
             nn.GroupNorm(num_groups=8, num_channels=128),
             nn.GELU()
         )
-        self.skip2 = nn.Sequential(
-            nn.Conv2d(in_channels, 128, kernel_size=1),
-            nn.Upsample(size=(56, 56), mode='bilinear', align_corners=False),
-        )
+        self.skip2 = nn.Sequential(nn.Conv2d(in_channels, 128, kernel_size=1))
+        # 128(up) + 128(skip) + 128(c_56) = 384
         self.fuse2 = nn.Sequential(nn.Conv2d(384, 128, kernel_size=3, padding=1), nn.GELU())
 
+        # 56 -> 112
         self.up3 = nn.Sequential(
-            nn.Upsample(size=(112, 112), mode='bilinear', align_corners=False),
-            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
             nn.GroupNorm(num_groups=8, num_channels=64),
             nn.GELU()
         )
-        self.skip3 = nn.Sequential(
-            nn.Conv2d(in_channels, 64, kernel_size=1),
-            nn.Upsample(size=(112, 112), mode='bilinear', align_corners=False),
-        )
+        self.skip3 = nn.Sequential(nn.Conv2d(in_channels, 64, kernel_size=1))
+        # 64(up) + 64(skip) + 64(c_112) = 192
         self.fuse3 = nn.Sequential(nn.Conv2d(192, 64, kernel_size=3, padding=1), nn.GELU())
 
+        # 112 -> 224
         self.up4 = nn.Sequential(
-            nn.Upsample(size=(224, 224), mode='bilinear', align_corners=False),
-            nn.Conv2d(64, out_channels, kernel_size=3, padding=1),
+            nn.ConvTranspose2d(64, out_channels, kernel_size=4, stride=2, padding=1),
             nn.GroupNorm(num_groups=4, num_channels=out_channels),
             nn.GELU()
         )
-        self.skip4 = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=1),
-            nn.Upsample(size=(224, 224), mode='bilinear', align_corners=False),
-        )
+        self.skip4 = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=1))
+        # 32(up) + 32(skip) + 32(c_224) = 96
         self.fuse4 = nn.Sequential(nn.Conv2d(96, out_channels, kernel_size=3, padding=1), nn.GELU())
     
-    def forward(self, G, F, rgb_feats):
-        # G는 디코더의 추출물 [B, 196, 768]
-        # F는 인코더의 추출물 [4, B, 196, 768] 2, 5, 8, 11
+    def forward(self, G, F_list, rgb_feats):
         B = G.shape[0]
-        c_28, c_56, c_112, c_224 = rgb_feats
+
+        # G         : [B, 384, 14x14]
+        # F_list    : [B, 384, 14x14]
+        # c_28      : [B, 256, 28, 28]
+        # c_56      : [B, 128, 56, 56]
+        # c_112     : [B, 64, 112, 112]
+        # c_224     : [B, 32, 224, 224]
+
+        c_28, c_56, c_112, c_224 = rgb_feats 
         
-        x = G.transpose(1, 2).view(B, self.in_channels, 16, 16)
-        f1 = F[3].transpose(1, 2).view(B, self.in_channels, 16, 16)
-        f2 = F[2].transpose(1, 2).view(B, self.in_channels, 16, 16)
-        f3 = F[1].transpose(1, 2).view(B, self.in_channels, 16, 16)
-        f4 = F[0].transpose(1, 2).view(B, self.in_channels, 16, 16)
+        x = G.transpose(1, 2).view(B, self.in_channels, 14, 14) # [B, 384, 14, 14]
+        f_list = [f.transpose(1, 2).view(B, self.in_channels, 14, 14) for f in F_list] # [B, 384, 14, 14]
         
+        # 14 -> 28
         x = self.up1(x) # [B, 256, 28, 28]
-        s1 = self.skip1(f1) # [B, 256, 28, 28]
-        x = torch.cat([x, s1, c_28], dim=1) # [B, 512, 28, 28]
+        s1 = self.skip1(f_list[3]) # [B, 256, 14, 14]
+        s1 = F.interpolate(s1, size=(28, 28), mode='bilinear', align_corners=False) # [B, 256, 28, 28]
+        x = torch.cat([x, s1, c_28], dim=1) # [B, 256 + 256 + 256, 28, 28]
         out_28 = self.fuse1(x) # [B, 256, 28, 28]
 
-        x = self.up2(out_28) # [B, 128, 56, 56]
-        s2 = self.skip2(f2) # [B, 128, 56, 56]
-        x = torch.cat([x, s2, c_56], dim=1) # [B, 256, 56, 56]
-        out_56 = self.fuse2(x) # [B, 128, 56, 56]
+        # 28 -> 56
+        x = self.up2(out_28) 
+        s2 = F.interpolate(self.skip2(f_list[2]), size=(56, 56), mode='bilinear', align_corners=False)
+        x = torch.cat([x, s2, c_56], dim=1) 
+        out_56 = self.fuse2(x) 
 
-        x = self.up3(out_56) # [B, 64, 112, 112]
-        s3 = self.skip3(f3) # [B, 64, 112, 112]
-        x = torch.cat([x, s3, c_112], dim=1) # [B, 128, 112, 112]
-        out_112 = self.fuse3(x) # [B, 64, 112, 112]
+        # 56 -> 112
+        x = self.up3(out_56) 
+        s3 = F.interpolate(self.skip3(f_list[1]), size=(112, 112), mode='bilinear', align_corners=False)
+        x = torch.cat([x, s3, c_112], dim=1) 
+        out_112 = self.fuse3(x) 
 
-        x = self.up4(out_112) # [B, 32, 224, 224]
-        s4 = self.skip4(f4) # [B, 32, 224, 224]
-        x = torch.cat([x, s4, c_224], dim=1) # [B, 64, 224, 224]
-        out_224 = self.fuse4(x) # [B, 32, 224, 224]
+        # 112 -> 224
+        x = self.up4(out_112) 
+        s4 = F.interpolate(self.skip4(f_list[0]), size=(224, 224), mode='bilinear', align_corners=False)
+        x = torch.cat([x, s4, c_224], dim=1) 
+        out_224 = self.fuse4(x) 
 
         return [out_28, out_56, out_112, out_224]
 
@@ -427,7 +425,7 @@ class MonoMirror_v3(nn.Module):
         
         self.patch_embedded_dim = 384
 
-        self.positionalEncoding2D = PositionalEncoding2D(d_model=self.patch_embedded_dim, h_patches=16, w_patches=16)
+        self.positionalEncoding2D = PositionalEncoding2D(d_model=self.patch_embedded_dim, h_patches=14, w_patches=14)
 
         self.projection_head = ProjectionHead(d_model=self.patch_embedded_dim)
 
@@ -460,11 +458,22 @@ class MonoMirror_v3(nn.Module):
         # image : [B, 3, H, W] [B, 3, 224, 224]
         B = prev_img.shape[0]
 
-        with torch.no_grad():
-            prev_G, prev_F = self.encoder(prev_img)
-            curr_G, curr_F = self.encoder(curr_img)
-            next_G, next_F = self.encoder(next_img)
+        # 224를 196으로 바꿈, 196은 14x14임, DINOv2에 딱 맞음.
+        prev_img_196 = F.interpolate(prev_img, size=(196, 196), mode='bilinear', align_corners=False)
+        curr_img_196 = F.interpolate(curr_img, size=(196, 196), mode='bilinear', align_corners=False)
+        next_img_196 = F.interpolate(next_img, size=(196, 196), mode='bilinear', align_corners=False)
 
+        with torch.no_grad():
+            # [B, 384, 14x14]가 나옴
+            prev_G, prev_F = self.encoder(prev_img_196)
+            curr_G, curr_F = self.encoder(curr_img_196)
+            next_G, next_F = self.encoder(next_img_196)
+
+        # 이것들 나옴
+        # [B, 32, 224, 224]
+        # [B, 64, 112, 112]
+        # [B, 128, 56, 56]
+        # [B, 256, 28, 28]
         prev_rgb_feats = self.rgb_extractor(prev_img)
         curr_rgb_feats = self.rgb_extractor(curr_img)
         next_rgb_feats = self.rgb_extractor(next_img)
@@ -500,9 +509,9 @@ class MonoMirror_v3(nn.Module):
         CURR_Z, CURR_DISP = self.depth_Head_224(CURR_F_DENSE)
         NEXT_Z, NEXT_DISP = self.depth_Head_224(NEXT_F_DENSE)
 
-        prev_F_frozen = F.interpolate(prev_F[-1].transpose(1, 2).view(B, -1, 16, 16), size=(224, 224), mode='bilinear', align_corners=False)
-        curr_F_frozen = F.interpolate(curr_F[-1].transpose(1, 2).view(B, -1, 16, 16), size=(224, 224), mode='bilinear', align_corners=False)
-        next_F_frozen = F.interpolate(next_F[-1].transpose(1, 2).view(B, -1, 16, 16), size=(224, 224), mode='bilinear', align_corners=False)
+        prev_F_frozen = prev_up_feats[-1] 
+        curr_F_frozen = curr_up_feats[-1]
+        next_F_frozen = next_up_feats[-1]
 
         PREV_XYZ = self.get_XYZ(B, PREV_Z, K)
         CURR_XYZ = self.get_XYZ(B, CURR_Z, K)

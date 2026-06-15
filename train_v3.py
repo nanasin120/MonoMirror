@@ -147,13 +147,13 @@ def train():
             # -------------------------------------------------------------------
             # 투영 및 Loss 계산 (이전과 동일)
             # -------------------------------------------------------------------
-            proj_feat_p2c, mask_feat_p2c = get_projected_image(curr_feature, prev_feature, CURR_XYZ, PREV_MATRIX)
-            proj_feat_n2c, mask_feat_n2c = get_projected_image(curr_feature, next_feature, CURR_XYZ, NEXT_MATRIX)
+            proj_feat_p2c, mask_feat_p2c = get_projected_image(curr_feature.detach(), prev_feature.detach(), CURR_XYZ, PREV_MATRIX)
+            proj_feat_n2c, mask_feat_n2c = get_projected_image(curr_feature.detach(), next_feature.detach(), CURR_XYZ, NEXT_MATRIX)
             
             proj_rgb_prev, mask_rgb_prev = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
             proj_rgb_next, mask_rgb_next = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
 
-            valid_p = mask_feat_p2c # 검은색 픽셀 버그 원천 차단
+            valid_p = mask_feat_p2c
             valid_n = mask_feat_n2c
 
             loss_reproj = criterion_feature_reprojection(curr_feature, proj_feat_p2c, valid_p, proj_feat_n2c, valid_n)
