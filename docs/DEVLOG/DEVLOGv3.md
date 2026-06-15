@@ -202,3 +202,49 @@ MonoMirror 아키텍처 개발 및 학습 파이프라인 구축 과정 기록
   물결이 안사라진다. 고민고민해보니까 이게 DINOv2가 결국에는 패치 단위로 보는데 그럼 패치별로 또 경계가 생기지 않을까 싶다.
 
 </details>
+
+<details>
+  <summary>
+    2026-06-16 0001 진행상태
+  </summary>
+
+  여러가지의 변화점이 있다. 먼저 LookAhead를 없에고 CosineAnnealingWarmRestarts에서 CosineAnnealingLR로 교체했다. 너무 덕지덕지 붙여놨다는 느낌이 들었다.
+
+  smooth loss를 0.001로 낮추었다. 아예 모든 깊이가 같아지는 문제가 발생해 낮추는 쪽으로 방향을 옮겼다.
+
+  모델에서의 가장 큰 차이점은 DINOv2에 들어가는 이미지의 크기를 224에서 196으로 줄여서 넣은 것이다.
+
+  이전에 224로 넣으니 224 / 14 = 16으로 G와 F가 나오게 되었다. 이게 문제인 이유가 나중에 upsampling에서 값을 올릴때 2배가 아닌 1.75배가 되는 것이다.
+
+  그래서 DINOv2 Encoder에 들어가는 이미지는 따로 크기를 줄여줬고 FeatureUpsampler의 주요 연산 방식들을 변경했다. 
+
+  <img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/ed2c8a65-818e-4aaa-99b6-453eec758138" />
+  
+  ```
+  ==> Epoch 500 완료 Train Loss : 0.0631 Train Reproj Loss : 0.0002 Train RGB Loss : 0.061419 Train Smooth Loss : 0.0266 Train Consist Loss : 0.001524 Time : 4.9829
+  Saved : ./save/model_save
+  --- [Fixed Sample Monitoring] ---
+  True fx: 315.00, True fy: 315.00
+  K : 
+  tensor([[[315.,   0., 112.],
+           [  0., 315., 112.],
+           [  0.,   0.,   1.]]], device='cuda:0')
+  E_CURR_PREV : 
+  tensor([[[ 9.9983e-01, -4.3648e-03, -1.8040e-02,  4.3801e-02],
+           [ 4.3475e-03,  9.9999e-01, -1.0007e-03,  2.1982e-02],
+           [ 1.8044e-02,  9.2207e-04,  9.9984e-01,  2.3840e-02],
+           [ 0.0000e+00,  0.0000e+00,  0.0000e+00,  1.0000e+00]]],
+         device='cuda:0')
+  E_CURR_NEXT : 
+  tensor([[[ 9.9976e-01, -3.8339e-05, -2.1906e-02,  5.0753e-02],
+           [ 4.8929e-04,  9.9979e-01,  2.0582e-02, -4.6664e-02],
+           [ 2.1900e-02, -2.0587e-02,  9.9955e-01, -4.6505e-02],
+           [ 0.0000e+00,  0.0000e+00,  0.0000e+00,  1.0000e+00]]],
+         device='cuda:0')
+  Z min: 0.2046, Z max: 1.9106, 갭: 1.7059
+  ---------------------------------
+  ```
+
+  물결은 사라졌다. 하지만 노트북의 화면에서 깊이가 달라지는것이 눈에 보인다. 깊이를 깔끔하게 추정하지를 못하고 있다.
+
+</details>
