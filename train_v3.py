@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from models.MonoMirror_v3 import MonoMirror_v3
 from data.ImageDataset import ImageDataset
 from defs import get_projected_image, load_croco_weights_to_dust3r, save_fixed_sample
-from utils.Loss import Edge_Aware_Smooth_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss, Pose_Consistency_Loss
+from utils.Loss import Edge_Aware_Smooth_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss, Pose_Consistency_Loss, Surface_Normal_Consistency_Loss
 import os
 import time
 from collections import defaultdict
@@ -84,6 +84,7 @@ criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
 criterion_feature_reprojection = Feature_Reprojection_Loss().to(DEVICE)
 criterion_rgb_reprojection = RGB_Reprojection_Loss().to(DEVICE)
 criterion_pose_consistency_loss = Pose_Consistency_Loss().to(DEVICE)
+criterion_surface_normal_consistency_loss = Surface_Normal_Consistency_Loss().to(DEVICE)
 
 # backbone_params = []
 # head_params = []
@@ -120,6 +121,7 @@ def train():
         train_reproj_loss = 0.0
         train_rgb_loss = 0.0
         train_consist_loss = 0.0
+        train_surface_loss = 0.0
         epoch_start_time = time.time()
 
         batch_start_time = time.time()
@@ -145,7 +147,7 @@ def train():
             CURR_XYZ = OUTPUTS['XYZ'][1]
 
             # -------------------------------------------------------------------
-            # 투영 및 Loss 계산 (이전과 동일)
+            # 투영 및 Loss 계산
             # -------------------------------------------------------------------
             proj_feat_p2c, mask_feat_p2c = get_projected_image(curr_feature.detach(), prev_feature.detach(), CURR_XYZ, PREV_MATRIX)
             proj_feat_n2c, mask_feat_n2c = get_projected_image(curr_feature.detach(), next_feature.detach(), CURR_XYZ, NEXT_MATRIX)
@@ -160,24 +162,36 @@ def train():
             loss_rgb_reproj = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev, valid_p, proj_rgb_next, valid_n)
 
             # -------------------------------------------------------------------
-            # 나머지 Loss 계산 (이름만 D -> DISP로 변경)
+            # edge loss
             # -------------------------------------------------------------------
             loss_smooth_1 = criterion_edge_smooth(OUTPUTS['DISP'][0], prev_image_vis)
             loss_smooth_2 = criterion_edge_smooth(OUTPUTS['DISP'][1], curr_image_vis)
             loss_smooth_3 = criterion_edge_smooth(OUTPUTS['DISP'][2], next_image_vis)
             loss_smoothloss = (loss_smooth_1 + loss_smooth_2 + loss_smooth_3) / 3.0
 
+            # -------------------------------------------------------------------
+            # pose loss
+            # -------------------------------------------------------------------
             loss_consist_prev = criterion_pose_consistency_loss(OUTPUTS['E'][0], OUTPUTS['E_INV'][0])
             loss_consist_next = criterion_pose_consistency_loss(OUTPUTS['E'][1], OUTPUTS['E_INV'][1])
             loss_consist = (loss_consist_prev + loss_consist_next) / 2.0
+
+            # -------------------------------------------------------------------
+            # surface loss
+            # -------------------------------------------------------------------
+            loss_surface_1 = criterion_surface_normal_consistency_loss(OUTPUTS['XYZ'][0], prev_image_vis)
+            loss_surface_2 = criterion_surface_normal_consistency_loss(OUTPUTS['XYZ'][1], curr_image_vis)
+            loss_surface_3 = criterion_surface_normal_consistency_loss(OUTPUTS['XYZ'][2], next_image_vis)
+            loss_surface = (loss_surface_1 + loss_surface_2 + loss_surface_3) / 3.0
 
             # 가중치 설정
             weight_reproj = 1.0
             weight_rgb = 1.0
             weight_consist = 1.0
             weight_smooth = 0.001
+            weight_surface = 0.1
             
-            total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + (loss_consist * weight_consist)
+            total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + (loss_consist * weight_consist) + (loss_surface * weight_surface)
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -194,16 +208,18 @@ def train():
             train_reproj_loss += loss_reproj.item()
             train_rgb_loss += loss_rgb_reproj.item()
             train_consist_loss += loss_consist.item()
+            train_surface_loss += loss_surface.item()
 
         avg_train_loss = train_loss / len(dataloader)
         avg_train_smooth_loss = train_smooth_loss / len(dataloader)
         avg_reproj_loss = train_reproj_loss / len(dataloader)
         avg_rgb_loss = train_rgb_loss / len(dataloader)
         avg_consist_loss = train_consist_loss / len(dataloader)
+        avg_surface_loss = train_surface_loss / len(dataloader)
 
         epoch_end_time = time.time()
         scheduler.step()
-        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train Reproj Loss : {avg_reproj_loss:.4f} Train RGB Loss : {avg_rgb_loss:4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Consist Loss : {avg_consist_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
+        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train feature reproj Loss : {avg_reproj_loss:.4f} Train RGB reproj Loss : {avg_rgb_loss:4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Consist Loss : {avg_consist_loss:4f} Train Surface Loss : {avg_surface_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
 
         if epoch % WEIGHT_SAVE_INTERVEL == 0:
             save_path = os.path.join(model_save_path, f'model_epoch_{epoch}.pth')

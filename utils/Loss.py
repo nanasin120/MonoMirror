@@ -374,7 +374,50 @@ class RGB_Reprojection_Loss(nn.Module): # 재투영한 특징값 Loss
         
         return loss_rgb_reproj
 
+class Surface_Normal_Consistency_Loss(nn.Module): # 표면 벡터를 이용한 Loss
+    def __init__(self):
+        super(Surface_Normal_Consistency_Loss, self).__init__()
 
+    def forward(self, XYZ, image):
+        # XYZ: 네트워크가 예측한 3D 좌표 [B, 50176, 3]
+        # image: 원본 입력 이미지 [B, 3, 224, 224]
+        
+        B = XYZ.shape[0]
+        H = W = 224
+        
+        # [B, 50176, 3] -> [B, 3, 224, 224]
+        XYZ_img = XYZ.view(B, H, W, 3).permute(0, 3, 1, 2)
+        
+        # X축, Y축 방향의 3D 표면 벡터 (바로 옆 픽셀과의 거리 차이)
+        V_x = XYZ_img[:, :, :, 1:] - XYZ_img[:, :, :, :-1] # 가로 벡터 [B, 3, H, W-1]
+        V_y = XYZ_img[:, :, 1:, :] - XYZ_img[:, :, :-1, :] # 세로 벡터 [B, 3, H-1, W]
+        
+        # 크기를 224로 똑같이 맞추기 위해 끝에 빈 공간을 복사해서 붙여줌 (Padding)
+        V_x = F.pad(V_x, (0, 1, 0, 0), mode='replicate') # [B, 3, H, W]
+        V_y = F.pad(V_y, (0, 0, 0, 1), mode='replicate') # [B, 3, H, W]
+
+        Normal = torch.cross(V_x, V_y, dim=1) # [B, 3, H, W]
+        Normal = F.normalize(Normal, p=2, dim=1) # 이쑤시개 길이를 1로 일정하게 맞춤
+
+        cos_sim_x = F.cosine_similarity(Normal[:, :, :, :-1], Normal[:, :, :, 1:], dim=1).unsqueeze(1)
+        cos_sim_y = F.cosine_similarity(Normal[:, :, :-1, :], Normal[:, :, 1:, :], dim=1).unsqueeze(1)
+
+        N_dx = 1.0 - cos_sim_x
+        N_dy = 1.0 - cos_sim_y
+        
+        # 테두리 확인용
+        img_dx = torch.abs(image[:, :, :, :-1] - image[:, :, :, 1:]).mean(dim=1, keepdim=True)
+        img_dy = torch.abs(image[:, :, :-1, :] - image[:, :, 1:, :]).mean(dim=1, keepdim=True)
+        
+        # 테두리에는 벌점을 주지 않음
+        weight_x = torch.exp(-img_dx * 50.0)
+        weight_y = torch.exp(-img_dy * 50.0)
+        
+        # 최종 Loss 계산
+        loss_x = (N_dx * weight_x).mean()
+        loss_y = (N_dy * weight_y).mean()
+        
+        return loss_x + loss_y
 
 
 
