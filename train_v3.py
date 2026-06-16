@@ -153,8 +153,8 @@ def train():
             proj_rgb_prev, mask_rgb_prev = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
             proj_rgb_next, mask_rgb_next = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
 
-            valid_p = mask_feat_p2c
-            valid_n = mask_feat_n2c
+            valid_p = mask_feat_p2c * mask_rgb_prev 
+            valid_n = mask_feat_n2c * mask_rgb_next
 
             loss_reproj = criterion_feature_reprojection(curr_feature, proj_feat_p2c, valid_p, proj_feat_n2c, valid_n)
             loss_rgb_reproj = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev, valid_p, proj_rgb_next, valid_n)
@@ -174,8 +174,8 @@ def train():
             # 가중치 설정
             weight_reproj = 1.0
             weight_rgb = 1.0
-            weight_consist = 0.01
-            weight_smooth = 0.1
+            weight_consist = 1.0
+            weight_smooth = 0.001
             
             total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + (loss_consist * weight_consist)
 

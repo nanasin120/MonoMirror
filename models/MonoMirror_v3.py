@@ -156,18 +156,8 @@ class ProjectionHead(nn.Module):
 
         axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 3.14159 / 3.0 # -3.14159 ~ 3.14159
         R = axis_angle_to_matrix(axis_angle) # [B, 3, 3]
-
-        # translation_dir = F.normalize(extrinsic_raw[:, 3:6], p=2, dim=-1) # 이동 방향 [B, 3]
-        # anchors = torch.tensor([0.05, 0.1, 0.2, 0.4, 0.8], dtype=torch.float32, device=F1.device) # 간격 [B, 5]
         
-        # scale_logits = extrinsic_raw[:, 6:11] # [B, 5]
-        # scale_probs = F.softmax(scale_logits, dim=-1) # [B, 5]
-        
-        # magnitude = torch.sum(scale_probs * anchors, dim=-1, keepdim=True) # [B, 1]
-        
-        # translation = translation_dir * magnitude # [B, 3]
-        
-        translation = torch.tanh(extrinsic_raw[:, 3:6]) * 0.5
+        translation = torch.tanh(extrinsic_raw[:, 3:6]) * 1.0
         
         E = torch.eye(4, device=F1.device).unsqueeze(0).repeat(B, 1, 1) # [B, 4, 4]
         E[:, :3, :3] = R
@@ -465,53 +455,46 @@ class MonoMirror_v3(nn.Module):
 
         with torch.no_grad():
             # [B, 384, 14x14]가 나옴
-            prev_G, prev_F = self.encoder(prev_img_196)
-            curr_G, curr_F = self.encoder(curr_img_196)
-            next_G, next_F = self.encoder(next_img_196)
+            PREV_G, PREV_F = self.encoder(prev_img_196)
+            CURR_G, CURR_F = self.encoder(curr_img_196)
+            NEXT_G, NEXT_F = self.encoder(next_img_196)
 
-        # 이것들 나옴
-        # [B, 32, 224, 224]
-        # [B, 64, 112, 112]
-        # [B, 128, 56, 56]
-        # [B, 256, 28, 28]
-        prev_rgb_feats = self.rgb_extractor(prev_img)
-        curr_rgb_feats = self.rgb_extractor(curr_img)
-        next_rgb_feats = self.rgb_extractor(next_img)
-
-        K, E_CURR_PREV, E_CURR_NEXT, E_CURR_PREV_INV, E_CURR_NEXT_INV = self.projection_head(prev_F[-1], curr_F[-1], next_F[-1])
+        K, E_CURR_PREV, E_CURR_NEXT, E_CURR_PREV_INV, E_CURR_NEXT_INV = self.projection_head(PREV_F[-1], CURR_F[-1], NEXT_F[-1])
         
-        prev_G = self.positionalEncoding2D(prev_G)
-        curr_G = self.positionalEncoding2D(curr_G)
-        next_G = self.positionalEncoding2D(next_G)
+        PREV_G = self.positionalEncoding2D(PREV_G)
+        CURR_G = self.positionalEncoding2D(CURR_G)
+        NEXT_G = self.positionalEncoding2D(NEXT_G)
 
         for decoder in self.decoders:
-            tmp_curr = curr_G
+            tmp_curr = CURR_G
             
-            curr_from_prev = decoder(tmp_curr, prev_G, E_CURR_PREV)
-            curr_from_next = decoder(tmp_curr, next_G, E_CURR_NEXT)
+            curr_from_prev = decoder(tmp_curr, PREV_G, E_CURR_PREV)
+            curr_from_next = decoder(tmp_curr, NEXT_G, E_CURR_NEXT)
 
-            curr_G = (curr_from_prev + curr_from_next) / 2.0
-            prev_G = decoder(prev_G, tmp_curr, E_CURR_PREV_INV)
-            next_G = decoder(next_G, tmp_curr, E_CURR_NEXT_INV)
+            CURR_G = (curr_from_prev + curr_from_next) / 2.0
+            PREV_G = decoder(PREV_G, tmp_curr, E_CURR_PREV_INV)
+            NEXT_G = decoder(NEXT_G, tmp_curr, E_CURR_NEXT_INV)
 
-        prev_up_feats = self.upsampler(prev_G, prev_F, prev_rgb_feats) 
-        curr_up_feats = self.upsampler(curr_G, curr_F, curr_rgb_feats)
-        next_up_feats = self.upsampler(next_G, next_F, next_rgb_feats)
+        # 4개 나옴
+        # [B, 32, 224, 224] [B, 64, 112, 112] [B, 128, 56, 56] [B, 256, 28, 28]
+        PREV_RGB_F = self.rgb_extractor(prev_img)
+        CURR_RGB_F = self.rgb_extractor(curr_img)
+        NEXT_RGB_F = self.rgb_extractor(next_img)
+
+        PREV_UP_F = self.upsampler(PREV_G, PREV_F, PREV_RGB_F) 
+        CURR_UP_F = self.upsampler(CURR_G, CURR_F, CURR_RGB_F)
+        NEXT_UP_F = self.upsampler(NEXT_G, NEXT_F, NEXT_RGB_F)
 
         PREV_MATRIX, PREV_MATRIX_INV = self.get_MATRIX(B, K, E_CURR_PREV, E_CURR_PREV_INV)
         NEXT_MATRIX, NEXT_MATRIX_INV = self.get_MATRIX(B, K, E_CURR_NEXT, E_CURR_NEXT_INV)
 
-        PREV_F_DENSE = prev_up_feats[-1]
-        CURR_F_DENSE = curr_up_feats[-1]
-        NEXT_F_DENSE = next_up_feats[-1]
+        PREV_F_DENSE = PREV_UP_F[-1]
+        CURR_F_DENSE = CURR_UP_F[-1]
+        NEXT_F_DENSE = NEXT_UP_F[-1]
 
         PREV_Z, PREV_DISP = self.depth_Head_224(PREV_F_DENSE)
         CURR_Z, CURR_DISP = self.depth_Head_224(CURR_F_DENSE)
         NEXT_Z, NEXT_DISP = self.depth_Head_224(NEXT_F_DENSE)
-
-        prev_F_frozen = prev_up_feats[-1] 
-        curr_F_frozen = curr_up_feats[-1]
-        next_F_frozen = next_up_feats[-1]
 
         PREV_XYZ = self.get_XYZ(B, PREV_Z, K)
         CURR_XYZ = self.get_XYZ(B, CURR_Z, K)
@@ -531,7 +514,7 @@ class MonoMirror_v3(nn.Module):
             'Z' : [PREV_Z, CURR_Z, NEXT_Z],            
             'DISP' : [PREV_DISP, CURR_DISP, NEXT_DISP],
             'XYZ' : [PREV_XYZ, CURR_XYZ, NEXT_XYZ],                
-            'F_FROZEN': [prev_F_frozen, curr_F_frozen, next_F_frozen],  # 🚨 여기 이름 변경!
+            'F_FROZEN': [PREV_F_DENSE, CURR_F_DENSE, NEXT_F_DENSE],
             'MATRIX' : [PREV_MATRIX, NEXT_MATRIX],
             'MATRIX_INV' : [PREV_MATRIX_INV, NEXT_MATRIX_INV],
             'E' : [E_CURR_PREV, E_CURR_NEXT],
