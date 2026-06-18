@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from models.MonoMirror_v3 import MonoMirror_v3
 from data.ImageDataset import ImageDataset
 from defs import get_projected_image, load_croco_weights_to_dust3r, save_fixed_sample
-from utils.Loss import Edge_Aware_Smooth_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss, Pose_Consistency_Loss, Surface_Normal_Consistency_Loss
+from utils.Loss import Edge_Aware_Smooth_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss, Pose_Consistency_Loss, Surface_Normal_Consistency_Loss, Piecewise_Planar_Loss
 import os
 import time
 from collections import defaultdict
@@ -69,7 +69,7 @@ img_dir = r'./dataset/laptop_dataset'
 feat_dir = r'./dataset/dino_features'
 img_dir = r'/content/data_local'
 feat_dir = r'/content/feature_local'
-full_dataset = ImageDataset(img_dir=img_dir, feat_dir=feat_dir, frame_interval=3)
+full_dataset = ImageDataset(img_dir=img_dir, feat_dir=feat_dir, frame_interval=1)
 
 dataloader = DataLoader(
     dataset=full_dataset,
@@ -85,6 +85,7 @@ criterion_feature_reprojection = Feature_Reprojection_Loss().to(DEVICE)
 criterion_rgb_reprojection = RGB_Reprojection_Loss().to(DEVICE)
 criterion_pose_consistency_loss = Pose_Consistency_Loss().to(DEVICE)
 criterion_surface_normal_consistency_loss = Surface_Normal_Consistency_Loss().to(DEVICE)
+criterion_piece_planar_loss = Piecewise_Planar_Loss().to(DEVICE)
 
 # backbone_params = []
 # head_params = []
@@ -122,6 +123,7 @@ def train():
         train_rgb_loss = 0.0
         train_consist_loss = 0.0
         train_surface_loss = 0.0
+        train_piece_loss = 0.0
         epoch_start_time = time.time()
 
         batch_start_time = time.time()
@@ -184,14 +186,26 @@ def train():
             loss_surface_3 = criterion_surface_normal_consistency_loss(OUTPUTS['XYZ'][2], next_image_vis)
             loss_surface = (loss_surface_1 + loss_surface_2 + loss_surface_3) / 3.0
 
+            # -------------------------------------------------------------------
+            # piece loss
+            # -------------------------------------------------------------------
+            loss_piece_1 = criterion_piece_planar_loss(OUTPUTS['XYZ'][0], prev_image_vis)
+            loss_piece_2 = criterion_piece_planar_loss(OUTPUTS['XYZ'][1], curr_image_vis)
+            loss_piece_3 = criterion_piece_planar_loss(OUTPUTS['XYZ'][2], next_image_vis)
+            loss_piece = (loss_piece_1 + loss_piece_2 + loss_piece_3) / 3.0
+
             # 가중치 설정
             weight_reproj = 1.0
             weight_rgb = 1.0
             weight_consist = 1.0
-            weight_smooth = 0.001
-            weight_surface = 0.1
+            weight_smooth = 0.01
+            weight_piece = 0.005
+            if epoch < 100:
+                weight_surface = 0.0
+            else:
+                weight_surface = 0.005
             
-            total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + (loss_consist * weight_consist) + (loss_surface * weight_surface)
+            total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + (loss_consist * weight_consist) + (loss_surface * weight_surface) + (loss_piece * weight_piece)
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -209,6 +223,7 @@ def train():
             train_rgb_loss += loss_rgb_reproj.item()
             train_consist_loss += loss_consist.item()
             train_surface_loss += loss_surface.item()
+            train_piece_loss += loss_piece.item()
 
         avg_train_loss = train_loss / len(dataloader)
         avg_train_smooth_loss = train_smooth_loss / len(dataloader)
@@ -216,10 +231,11 @@ def train():
         avg_rgb_loss = train_rgb_loss / len(dataloader)
         avg_consist_loss = train_consist_loss / len(dataloader)
         avg_surface_loss = train_surface_loss / len(dataloader)
+        avg_piece_loss = train_piece_loss / len(dataloader)
 
         epoch_end_time = time.time()
         scheduler.step()
-        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train feature reproj Loss : {avg_reproj_loss:.4f} Train RGB reproj Loss : {avg_rgb_loss:4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Consist Loss : {avg_consist_loss:4f} Train Surface Loss : {avg_surface_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
+        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train feature reproj Loss : {avg_reproj_loss:.4f} Train RGB reproj Loss : {avg_rgb_loss:4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Consist Loss : {avg_consist_loss:4f} Train Surface Loss : {avg_surface_loss:4f} Train Piece Loss : {avg_piece_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
 
         if epoch % WEIGHT_SAVE_INTERVEL == 0:
             save_path = os.path.join(model_save_path, f'model_epoch_{epoch}.pth')

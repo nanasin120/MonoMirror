@@ -110,8 +110,8 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
         # 이미지 색상이 변하면 깊이 평활화를 꺼버림 (exp(-색상변화))
         # 색상 변화가 클수록 가중치가 0에 가까워져서 Smooth Loss가 무시됨
         # [B, 1, H, W-1], [B, 1, H-1, W]
-        weight_x = torch.exp(-img_dx * 10.0)
-        weight_y = torch.exp(-img_dy * 10.0)
+        weight_x = torch.exp(-img_dx * 150.0)
+        weight_y = torch.exp(-img_dy * 150.0)
 
         pad_mask = (img.sum(dim=1, keepdim=True) > 0).float()
         mask_x = pad_mask[:, :, :, :-1] * pad_mask[:, :, :, 1:]
@@ -410,8 +410,8 @@ class Surface_Normal_Consistency_Loss(nn.Module): # 표면 벡터를 이용한 L
         img_dy = torch.abs(image[:, :, :-1, :] - image[:, :, 1:, :]).mean(dim=1, keepdim=True)
         
         # 테두리에는 벌점을 주지 않음
-        weight_x = torch.exp(-img_dx * 50.0)
-        weight_y = torch.exp(-img_dy * 50.0)
+        weight_x = torch.exp(-img_dx * 150.0)
+        weight_y = torch.exp(-img_dy * 150.0)
         
         # 최종 Loss 계산
         loss_x = (N_dx * weight_x).mean()
@@ -419,8 +419,53 @@ class Surface_Normal_Consistency_Loss(nn.Module): # 표면 벡터를 이용한 L
         
         return loss_x + loss_y
 
+class Piecewise_Planar_Loss(nn.Module):
+    def __init__(self):
+        super(Piecewise_Planar_Loss, self).__init__()
 
+    def forward(self, XYZ, image):
+        # XYZ: 네트워크가 예측한 3D 좌표 [B, 50176, 3]
+        # image: 원본 입력 이미지 [B, 3, 224, 224]
 
+        B = XYZ.shape[0]
+        H = W = 224
+        
+        # [B, 3, 224, 224]
+        XYZ_img = XYZ.view(B, H, W, 3).permute(0, 3, 1, 2)
+        
+        # X축, Y축 방향의 3D 표면 벡터 (바로 옆 픽셀과의 거리 차이)
+        V_x = XYZ_img[:, :, :, 1:] - XYZ_img[:, :, :, :-1]
+        V_y = XYZ_img[:, :, 1:, :] - XYZ_img[:, :, :-1, :]
+        V_x = F.pad(V_x, (0, 1, 0, 0), mode='replicate')
+        V_y = F.pad(V_y, (0, 0, 0, 1), mode='replicate')
+        
+        # 외적하고 정규화
+        Normal = torch.cross(V_x, V_y, dim=1)
+        Normal = F.normalize(Normal, p=2, dim=1) # [B, 3, 224, 224]
+        
+        # X축, Y축 방향의 3D 표면 벡터 (바로 옆옆 픽셀과의 거리 차이)
+        V_x2 = XYZ_img[:, :, :, 2:] - XYZ_img[:, :, :, :-2]
+        V_y2 = XYZ_img[:, :, 2:, :] - XYZ_img[:, :, :-2, :]
+        V_x2 = F.pad(V_x2, (0, 2, 0, 0), mode='replicate')
+        V_y2 = F.pad(V_y2, (0, 0, 0, 2), mode='replicate')
+        
+        # dim=1(X, Y, Z 채널) 방향으로 곱하고 더해서 내적 계산
+        dot_x = torch.abs(torch.sum(Normal * V_x2, dim=1, keepdim=True))
+        dot_y = torch.abs(torch.sum(Normal * V_y2, dim=1, keepdim=True))
+        
+        # 테두리 확인용
+        img_dx = torch.abs(image[:, :, :, :-2] - image[:, :, :, 2:]).mean(dim=1, keepdim=True)
+        img_dy = torch.abs(image[:, :, :-2, :] - image[:, :, 2:, :]).mean(dim=1, keepdim=True)
+        img_dx = F.pad(img_dx, (0, 2, 0, 0), mode='replicate')
+        img_dy = F.pad(img_dy, (0, 0, 0, 2), mode='replicate')
+        
+        weight_x = torch.exp(-img_dx * 50.0)
+        weight_y = torch.exp(-img_dy * 50.0)
+        
+        loss_x = (dot_x * weight_x).mean()
+        loss_y = (dot_y * weight_y).mean()
+        
+        return loss_x + loss_y
 
 
 
