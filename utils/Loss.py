@@ -358,13 +358,14 @@ class RGB_Reprojection_Loss(nn.Module): # 재투영한 특징값 Loss
         rgb_loss_p = self.pe(curr_image_vis, proj_img_prev)
         rgb_loss_n = self.pe(curr_image_vis, proj_img_next)
         
-        rgb_loss_p[~mask_img_prev.bool()] = 9999.0
-        rgb_loss_n[~mask_img_next.bool()] = 9999.0
+        rgb_loss_p[~mask_img_prev.bool()] = float('inf')
+        rgb_loss_n[~mask_img_next.bool()] = float('inf')
         
         min_rgb_loss = torch.minimum(rgb_loss_p, rgb_loss_n)
 
         source_loss_p = self.pe(curr_image_vis, prev_image_vis)
         source_loss_n = self.pe(curr_image_vis, next_image_vis)
+        
         min_source_loss = torch.minimum(source_loss_p, source_loss_n)
 
         final_loss = torch.minimum(min_rgb_loss, min_source_loss)

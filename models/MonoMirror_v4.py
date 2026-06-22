@@ -181,7 +181,6 @@ class FeatureUpsampler(nn.Module):
             nn.GELU()
         )
         
-        # [수술 1] ConvTranspose2d 대신 Upsample + Conv2d를 써서 체커보드 노이즈 원천 차단!
         self.up1 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
             nn.Conv2d(in_channels, 256, kernel_size=3, padding=1),
@@ -203,8 +202,6 @@ class FeatureUpsampler(nn.Module):
             nn.Conv2d(128, 64, kernel_size=3, padding=1),
             nn.GroupNorm(8, 64), nn.GELU()
         )
-        # [수술 2] 고해상도에서는 14x14 스킵 커넥션을 제거하여 뭉툭한 도트 무늬 방지!
-        # 64(up) + 64(c_112) = 128
         self.fuse3 = nn.Sequential(nn.Conv2d(128, 64, kernel_size=3, padding=1), nn.GELU())
 
         self.up4 = nn.Sequential(
@@ -212,8 +209,12 @@ class FeatureUpsampler(nn.Module):
             nn.Conv2d(64, out_channels, kernel_size=3, padding=1),
             nn.GroupNorm(4, out_channels), nn.GELU()
         )
-        # 32(up) + 32(c_224) = 64
         self.fuse4 = nn.Sequential(nn.Conv2d(64, out_channels, kernel_size=3, padding=1), nn.GELU())
+
+        self.depth_head_28 = nn.Sequential(nn.Conv2d(256, 1, kernel_size=3, padding=1), nn.Sigmoid())
+        self.depth_head_56 = nn.Sequential(nn.Conv2d(128, 1, kernel_size=3, padding=1), nn.Sigmoid())
+        self.depth_head_112 = nn.Sequential(nn.Conv2d(64, 1, kernel_size=3, padding=1), nn.Sigmoid())
+        self.depth_head_224 = nn.Sequential(nn.Conv2d(out_channels, 1, kernel_size=3, padding=1), nn.Sigmoid())
     
     def forward(self, G, F_list, rgb_feats, cost_volume=None):
         B = G.shape[0]
@@ -233,23 +234,30 @@ class FeatureUpsampler(nn.Module):
         x = torch.cat([x, s1, c_28], dim=1) 
         out_28 = self.fuse1(x) 
 
+        disp1 = self.depth_head_28(out_28)
+
         # 28 -> 56
         x = self.up2(out_28) 
         s2 = F.interpolate(self.skip2(f_list[2]), size=(56, 56), mode='bilinear', align_corners=False)
         x = torch.cat([x, s2, c_56], dim=1) 
         out_56 = self.fuse2(x) 
+        
+        disp2 = self.depth_head_56(out_56)
 
-        # 56 -> 112 (여기서부터 14x14 찌꺼기를 빼고 순수 RGB 디테일에만 의존!)
         x = self.up3(out_56) 
         x = torch.cat([x, c_112], dim=1) 
         out_112 = self.fuse3(x) 
+        
+        disp3 = self.depth_head_112(out_112)
 
         # 112 -> 224
         x = self.up4(out_112) 
         x = torch.cat([x, c_224], dim=1) 
         out_224 = self.fuse4(x) 
+        
+        disp4 = self.depth_head_224(out_224)
 
-        return [out_28, out_56, out_112, out_224]
+        return [out_28, out_56, out_112, out_224], [disp1, disp2, disp3, disp4]
 
 class ImplicitDepthHead(nn.Module):
     def __init__(self, in_channels=384, img_size=224):
@@ -650,7 +658,7 @@ class MonoMirror_v4(nn.Module):
 
     def forward(self, prev_img, curr_img, next_img, sfs=False):
         # image : [B, 3, H, W] [B, 3, 224, 224]
-        B = prev_img.shape[0]
+        B, C, H, W = prev_img.shape
 
         # 224를 196으로 바꿈, 196은 14x14임, DINOv2에 딱 맞음.
         prev_img_196 = F.interpolate(prev_img, size=(196, 196), mode='bilinear', align_corners=False)
@@ -695,16 +703,26 @@ class MonoMirror_v4(nn.Module):
 
         CV_COMBINED = (CV_PREV + CV_NEXT) / 2.0
 
-        CURR_UP_F = self.upsampler(CURR_G, CURR_F, CURR_RGB_F, CV_COMBINED)
+        CURR_UP_F, DISP = self.upsampler(CURR_G, CURR_F, CURR_RGB_F, CV_COMBINED)
+
+        DISP[0] = F.interpolate(DISP[0], size=(H, W), mode='nearest')
+        DISP[1] = F.interpolate(DISP[1], size=(H, W), mode='nearest')
+        DISP[2] = F.interpolate(DISP[2], size=(H, W), mode='nearest')
 
         PREV_MATRIX, PREV_MATRIX_INV = self.get_MATRIX(B, K, E_CURR_PREV, E_CURR_PREV_INV)
         NEXT_MATRIX, NEXT_MATRIX_INV = self.get_MATRIX(B, K, E_CURR_NEXT, E_CURR_NEXT_INV)
 
-        CURR_F_DENSE = CURR_UP_F[-1]
+        CURR_Z_28 = 1.0 / (self.d_min + (self.d_max - self.d_min) * DISP[0])
+        CURR_Z_56 = 1.0 / (self.d_min + (self.d_max - self.d_min) * DISP[1])
+        CURR_Z_112 = 1.0 / (self.d_min + (self.d_max - self.d_min) * DISP[2])
+        CURR_Z_224 = 1.0 / (self.d_min + (self.d_max - self.d_min) * DISP[3])
 
-        CURR_Z, CURR_DISP = self.depth_Head_224(CURR_F_DENSE)
+        CURR_XYZ_28 = self.get_XYZ(B, CURR_Z_28, K)
+        CURR_XYZ_56 = self.get_XYZ(B, CURR_Z_56, K)
+        CURR_XYZ_112 = self.get_XYZ(B, CURR_Z_112, K)
+        CURR_XYZ_224 = self.get_XYZ(B, CURR_Z_224, K)
 
-        CURR_XYZ = self.get_XYZ(B, CURR_Z, K)
+        CURR_Z = CURR_Z_224
 
         if sfs:
             print(f"--- [Fixed Sample Monitoring] ---")
@@ -716,8 +734,8 @@ class MonoMirror_v4(nn.Module):
             print(f"---------------------------------")
 
         return {
-            'CURR_DISP' : CURR_DISP,
-            'CURR_XYZ' : CURR_XYZ, 
+            'DISP' : DISP,
+            'XYZ' : [CURR_XYZ_28, CURR_XYZ_56, CURR_XYZ_112, CURR_XYZ_224], 
             'PREV_MATRIX' : PREV_MATRIX,
             'NEXT_MATRIX' : NEXT_MATRIX,
             'PREV_G_RAW' : PREV_G_RAW,

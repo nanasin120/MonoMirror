@@ -19,12 +19,11 @@ def save_fixed_sample_v4(model, dataset, epoch, save_path, device):
         curr_image_model = sample['curr_image_model'].unsqueeze(0).to(device)
         next_image_model = sample['next_image_model'].unsqueeze(0).to(device)
 
-        # 모델 추론 (sfs 플래그는 필요에 따라 넣으세요)
         OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, True)
         
         # V4에 맞게 깔끔해진 출력값 추출
-        CURR_XYZ = OUTPUTS['CURR_XYZ']
-        CURR_DISP = OUTPUTS['CURR_DISP']
+        CURR_XYZ = OUTPUTS['XYZ'][-1]
+        CURR_DISP = OUTPUTS['DISP'][-1]
         PREV_MATRIX = OUTPUTS['PREV_MATRIX']
         NEXT_MATRIX = OUTPUTS['NEXT_MATRIX']
 

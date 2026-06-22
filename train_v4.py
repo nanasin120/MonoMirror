@@ -74,15 +74,18 @@ def train():
             curr_image_model = batch['curr_image_model'].to(DEVICE)
             next_image_model = batch['next_image_model'].to(DEVICE)
 
-            OUTPUTS = model(prev_image_model, curr_image_model, next_image_model)
+            OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, False)
 
-            CURR_DISP = OUTPUTS['CURR_DISP']
-            CURR_XYZ = OUTPUTS['CURR_XYZ']
+            DISP = OUTPUTS['DISP']
+            XYZ = OUTPUTS['XYZ']
             PREV_MATRIX = OUTPUTS['PREV_MATRIX']
             NEXT_MATRIX = OUTPUTS['NEXT_MATRIX']
             PREV_G = OUTPUTS['PREV_G_RAW']
             CURR_G = OUTPUTS['CURR_G_RAW']
             NEXT_G = OUTPUTS['NEXT_G_RAW']
+
+            CURR_DISP = DISP[3]
+            CURR_XYZ = XYZ[3]
 
             B, _, C = CURR_G.shape
 
@@ -95,16 +98,33 @@ def train():
             CURR_XYZ_14_FLAT = CURR_XYZ_14.view(B, 3, -1).transpose(1, 2)
             
             # -------------------------------------------------------------------
-            # 투영 및 Loss 계산
+            # 특징 재투영
             # -------------------------------------------------------------------
             proj_feat_p2c, mask_feat_p2c = get_projected_image(CURR_G_2D, PREV_G_2D, CURR_XYZ_14_FLAT, PREV_MATRIX)
             proj_feat_n2c, mask_feat_n2c = get_projected_image(CURR_G_2D, NEXT_G_2D, CURR_XYZ_14_FLAT, NEXT_MATRIX)
 
-            proj_rgb_prev, mask_rgb_prev = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
-            proj_rgb_next, mask_rgb_next = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
-
             loss_reproj = criterion_feature_reprojection(CURR_G_2D, proj_feat_p2c, mask_feat_p2c, proj_feat_n2c, mask_feat_n2c)
-            loss_rgb_reproj = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev, mask_rgb_prev, proj_rgb_next, mask_rgb_next)
+
+            # -------------------------------------------------------------------
+            # RGB 재투영
+            # -------------------------------------------------------------------
+            proj_rgb_prev_28, mask_rgb_prev_28 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[0], PREV_MATRIX)
+            proj_rgb_next_28, mask_rgb_next_28 = get_projected_image(curr_image_vis, next_image_vis, XYZ[0], NEXT_MATRIX)
+            loss_rgb_reproj_28 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_28, mask_rgb_prev_28, proj_rgb_next_28, mask_rgb_next_28)
+
+            proj_rgb_prev_56, mask_rgb_prev_56 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[1], PREV_MATRIX)
+            proj_rgb_next_56, mask_rgb_next_56 = get_projected_image(curr_image_vis, next_image_vis, XYZ[1], NEXT_MATRIX)
+            loss_rgb_reproj_56 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_56, mask_rgb_prev_56, proj_rgb_next_56, mask_rgb_next_56)
+
+            proj_rgb_prev_112, mask_rgb_prev_112 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[2], PREV_MATRIX)
+            proj_rgb_next_112, mask_rgb_next_112 = get_projected_image(curr_image_vis, next_image_vis, XYZ[2], NEXT_MATRIX)
+            loss_rgb_reproj_112 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_112, mask_rgb_prev_112, proj_rgb_next_112, mask_rgb_next_112)
+
+            proj_rgb_prev_224, mask_rgb_prev_224 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[3], PREV_MATRIX)
+            proj_rgb_next_224, mask_rgb_next_224 = get_projected_image(curr_image_vis, next_image_vis, XYZ[3], NEXT_MATRIX)
+            loss_rgb_reproj_224 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_224, mask_rgb_prev_224, proj_rgb_next_224, mask_rgb_next_224)
+
+            loss_rgb_reproj = (loss_rgb_reproj_224 * 1.0 + loss_rgb_reproj_112 * 0.5 + loss_rgb_reproj_56 * 0.25 + loss_rgb_reproj_28 * 0.125)
 
             # -------------------------------------------------------------------
             # edge loss
@@ -123,10 +143,10 @@ def train():
 
             # 가중치 설정
             weight_rgb = 1.0
-            weight_reproj = 0.5
-            weight_smooth = 0.005
-            weight_piece = 0.001
-            weight_surface = 0.001
+            weight_reproj = 0.01
+            weight_smooth = 0.003
+            weight_surface = 0.005
+            weight_piece = 0.003
             
             total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + (loss_surface * weight_surface) + (loss_piece * weight_piece)
 
