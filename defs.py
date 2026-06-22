@@ -5,6 +5,53 @@ import torchvision.utils as vutils
 import os
 import numpy as np
 
+def save_fixed_sample_v4(model, dataset, epoch, save_path, device):
+    model.eval()
+    with torch.no_grad():
+        # 고정된 첫 번째 데이터 가져오기
+        sample = dataset[0]
+
+        prev_image_vis = sample['prev_image_vis'].unsqueeze(0).to(device)
+        curr_image_vis = sample['curr_image_vis'].unsqueeze(0).to(device)
+        next_image_vis = sample['next_image_vis'].unsqueeze(0).to(device)
+
+        prev_image_model = sample['prev_image_model'].unsqueeze(0).to(device)
+        curr_image_model = sample['curr_image_model'].unsqueeze(0).to(device)
+        next_image_model = sample['next_image_model'].unsqueeze(0).to(device)
+
+        # 모델 추론 (sfs 플래그는 필요에 따라 넣으세요)
+        OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, True)
+        
+        # V4에 맞게 깔끔해진 출력값 추출
+        CURR_XYZ = OUTPUTS['CURR_XYZ']
+        CURR_DISP = OUTPUTS['CURR_DISP']
+        PREV_MATRIX = OUTPUTS['PREV_MATRIX']
+        NEXT_MATRIX = OUTPUTS['NEXT_MATRIX']
+
+        # RGB 재투영 (224x224)
+        proj_img_p2c, mask_p2c = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
+        proj_img_n2c, mask_n2c = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
+
+        # [꿀팁] Error Map 계산 (원본과 당겨온 사진의 차이, 0에 가까울수록 검은색)
+        error_p2c = torch.abs(curr_image_vis - proj_img_p2c) * mask_p2c
+        error_n2c = torch.abs(curr_image_vis - proj_img_n2c) * mask_n2c
+
+        # 오직 1장뿐인 소중하고 완벽한 현재 깊이 맵!
+        viz_d_curr = get_depth_viz(CURR_DISP, curr_image_vis)
+
+        # 3x3 그리드 조립
+        # 1행: 과거, 현재, 미래 (입력값)
+        row1 = torch.cat([prev_image_vis[0], curr_image_vis[0], next_image_vis[0]], dim=2) 
+        # 2행: 과거당겨옴, 현재깊이, 미래당겨옴 (핵심 결과)
+        row2 = torch.cat([proj_img_p2c[0], viz_d_curr[0], proj_img_n2c[0]], dim=2)
+        # 3행: 과거에러, 현재원본, 미래에러 (Loss 상태 모니터링)
+        row3 = torch.cat([error_p2c[0], curr_image_vis[0], error_n2c[0]], dim=2)
+
+        combined = torch.cat([row1, row2, row3], dim=1)
+        
+        vutils.save_image(combined, os.path.join(save_path, f'vis_epoch_{epoch}.png'))
+        print(f"saved V4 3x3 grid image: vis_epoch_{epoch}.png")
+
 def save_fixed_sample(model, dataset, epoch, save_path, device, version):
     model.eval()
     with torch.no_grad():
@@ -99,8 +146,8 @@ def get_projected_points(X, MATRIX):
     projected_points = torch.matmul(X_homo, MATRIX.transpose(1, 2)) # [B, H * W, 4]
     return projected_points
 
-def get_projected_image(img1, img2, X, MATRIX):
-    B, _, H, W = img1.shape
+def get_projected_image(img1, img2, X, MATRIX, cam_H=224, cam_W=224):
+    B, _, img_H, img_W = img1.shape
     projected_points = get_projected_points(X, MATRIX)
 
     raw_z = projected_points[..., 2]
@@ -109,9 +156,9 @@ def get_projected_image(img1, img2, X, MATRIX):
     v = projected_points[..., 1] / z
 
     # 0.5를 더하는 로직을 추가했기에 (W-1)이 아닌 W로 나눔
-    grid_u = (u / W) * 2.0 - 1.0
-    grid_v = (v / H) * 2.0 - 1.0
-    grid = torch.stack([grid_u, grid_v], dim=-1).view(B, H, W, 2)
+    grid_u = (u / cam_W) * 2.0 - 1.0
+    grid_v = (v / cam_H) * 2.0 - 1.0
+    grid = torch.stack([grid_u, grid_v], dim=-1).view(B, img_H, img_W, 2)
 
     projected_img = F.grid_sample(img2, grid, mode='bilinear', padding_mode='zeros', align_corners=False)
 
@@ -119,7 +166,7 @@ def get_projected_image(img1, img2, X, MATRIX):
     valid_u = ((grid_u >= -1.0) & (grid_u <= 1.0)).float()
     valid_v = ((grid_v >= -1.0) & (grid_v <= 1.0)).float()
     
-    valid_mask = (valid_z * valid_u * valid_v).view(B, 1, H, W)
+    valid_mask = (valid_z * valid_u * valid_v).view(B, 1, img_H, img_W)
 
     return projected_img, valid_mask
 

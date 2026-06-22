@@ -467,6 +467,49 @@ class Piecewise_Planar_Loss(nn.Module):
         
         return loss_x + loss_y
 
+class new_Piecewise_Planar_Loss(nn.Module):
+    def __init__(self):
+        super(new_Piecewise_Planar_Loss, self).__init__()
+
+    def forward(self, disp, image):
+        # ---------------------------------------------------------
+        # 방어막 1: Disparity 평균 정규화 (하얗게 타버리는 꼼수 차단!)
+        # ---------------------------------------------------------
+        mean_disp = disp.mean(2, True).mean(3, True)
+        norm_disp = disp / (mean_disp + 1e-7) # 0으로 나누는 것 방지
+
+        # 이제 disp 대신 norm_disp를 가지고 미분을 시작합니다.
+        V_x = norm_disp[:, :, :, 1:] - norm_disp[:, :, :, :-1]
+        V_y = norm_disp[:, :, 1:, :] - norm_disp[:, :, :-1, :]
+        
+        V_x2 = V_x[:, :, :, 1:] - V_x[:, :, :, :-1]
+        V_y2 = V_y[:, :, 1:, :] - V_y[:, :, :-1, :]
+
+        V_x2 = F.pad(V_x2, (0, 2, 0, 0), mode='replicate')
+        V_y2 = F.pad(V_y2, (0, 0, 0, 2), mode='replicate')
+        
+        # ---------------------------------------------------------
+        # 방어막 2: Charbonnier Penalty (V자 미분 폭주 방지!)
+        # torch.abs() 대신 사용합니다. 1e-6을 더해 밑바닥을 부드럽게 깎아줍니다.
+        # ---------------------------------------------------------
+        dot_x = torch.sqrt(V_x2 ** 2 + 1e-6)
+        dot_y = torch.sqrt(V_y2 ** 2 + 1e-6)
+        
+        # 테두리 확인용 (image는 값이 크지 않아 abs를 써도 터지지 않습니다)
+        img_dx = torch.abs(image[:, :, :, :-2] - image[:, :, :, 2:]).mean(dim=1, keepdim=True)
+        img_dy = torch.abs(image[:, :, :-2, :] - image[:, :, 2:, :]).mean(dim=1, keepdim=True)
+        img_dx = F.pad(img_dx, (0, 2, 0, 0), mode='replicate')
+        img_dy = F.pad(img_dy, (0, 0, 0, 2), mode='replicate')
+        
+        weight_x = torch.exp(-img_dx * 50.0)
+        weight_y = torch.exp(-img_dy * 50.0)
+        
+        loss_x = (dot_x * weight_x).mean()
+        loss_y = (dot_y * weight_y).mean()
+        
+        return loss_x + loss_y
+
+
 
 
 
