@@ -10,9 +10,13 @@ MonoMirror 아키텍처 개발 및 학습 파이프라인 구축 과정 기록
   새로운 방식을 적용하고 첫번째
 
   weight_rgb = 1.0
+  
   weight_reproj = 0.0
+  
   weight_smooth = 0.001
+  
   weight_surface = 0.001
+  
   weight_piece = 0.001
 
   <img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/dd62dc25-2121-48e2-9830-d1d413449446" />
@@ -53,9 +57,13 @@ Z min: 0.2000, Z max: 2.4219, 갭: 2.2219
   </summary>
 
   weight_rgb = 1.0
+  
   weight_reproj = 0.005
+  
   weight_smooth = 0.01
+  
   weight_surface = 0.01
+  
   weight_piece = 0.01
 
   <img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/edbf56a7-202a-4e22-bab8-b3675dac5bb1" />
