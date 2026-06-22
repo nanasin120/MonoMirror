@@ -52,6 +52,12 @@ Z min: 0.2000, Z max: 2.4219, 갭: 2.2219
     2026-06-22 2332 진행상태
   </summary>
 
+  weight_rgb = 1.0
+  weight_reproj = 0.005
+  weight_smooth = 0.01
+  weight_surface = 0.01
+  weight_piece = 0.01
+
   <img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/edbf56a7-202a-4e22-bab8-b3675dac5bb1" />
 
   ```
