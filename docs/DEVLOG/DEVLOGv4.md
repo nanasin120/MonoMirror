@@ -45,3 +45,40 @@ Z min: 0.2000, Z max: 2.4219, 갭: 2.2219
   윤곽선이 분리가 안되었다. 아직 문제가 많다.
 
 </details>
+
+
+<details>
+  <summary>
+    2026-06-22 2332 진행상태
+  </summary>
+
+  <img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/edbf56a7-202a-4e22-bab8-b3675dac5bb1" />
+
+  ```
+  ==> Epoch 500 완료 Train Loss : 0.1104 Train feature reproj Loss : 0.5646 Train RGB reproj Loss : 0.106836 Train Smooth Loss : 0.0042 Train Surface Loss : 0.068859 Train Piece Loss : 0.005517 Time : 3.6761
+  Saved : ./save/model_save
+  --- [Fixed Sample Monitoring] ---
+  True fx: 315.00, True fy: 315.00
+  K : 
+  tensor([[[315.,   0., 112.],
+           [  0., 315., 112.],
+           [  0.,   0.,   1.]]], device='cuda:0')
+  E_CURR_PREV : 
+  tensor([[[ 0.6467, -0.6612, -0.3801,  0.0950],
+           [ 0.7480,  0.4523,  0.4858, -0.0956],
+           [-0.1493, -0.5985,  0.7871,  0.1000],
+           [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+  E_CURR_NEXT : 
+  tensor([[[ 0.6761, -0.6322, -0.3783,  0.0925],
+           [ 0.7320,  0.5182,  0.4423, -0.0977],
+           [-0.0836, -0.5760,  0.8132,  0.1000],
+           [ 0.0000,  0.0000,  0.0000,  1.0000]]], device='cuda:0')
+  Z min: 0.2008, Z max: 2.4718, 갭: 2.2711
+  ---------------------------------
+  ```
+
+  <img width="672" height="672" alt="vis_epoch_500" src="https://github.com/user-attachments/assets/e33086de-b1e3-4c21-9286-df800052eb1e" />
+
+  보면 책상과 바닥의 깊이가 비슷하게 나온다. 그냥 보이는것만 부드럽게 나오고 깊이감은 잡히지 않는것 같다.
+
+</details>
