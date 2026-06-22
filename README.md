@@ -40,6 +40,6 @@ Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연�
 
 # 최신 상태
 
-<img width="672" height="672" alt="ezgif com-animated-gif-maker" src="https://github.com/user-attachments/assets/9a4833ef-ae67-4955-8f53-f60cc960cc82" />
+<img width="672" height="672" alt="vis_epoch_500" src="https://github.com/user-attachments/assets/26cae321-6adf-4e71-9b88-99868cb6eb14" />
 
-자판의 디테일은 잘 나오지만 특유의 물결과 같은 깊이가 나오는 문제가 있다.
+깊이가 다른곳을 침투했다.
