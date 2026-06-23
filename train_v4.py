@@ -94,37 +94,86 @@ def train():
             NEXT_G_2D = NEXT_G.transpose(1, 2).view(B, C, 14, 14)
 
             CURR_XYZ_2D = CURR_XYZ.transpose(1, 2).view(B, 3, 224, 224)
+
             CURR_XYZ_14 = F.interpolate(CURR_XYZ_2D, size=(14, 14), mode='bilinear', align_corners=False)
             CURR_XYZ_14_FLAT = CURR_XYZ_14.view(B, 3, -1).transpose(1, 2)
             
-            # -------------------------------------------------------------------
-            # 특징 재투영
-            # -------------------------------------------------------------------
-            proj_feat_p2c, mask_feat_p2c = get_projected_image(CURR_G_2D, PREV_G_2D, CURR_XYZ_14_FLAT, PREV_MATRIX)
-            proj_feat_n2c, mask_feat_n2c = get_projected_image(CURR_G_2D, NEXT_G_2D, CURR_XYZ_14_FLAT, NEXT_MATRIX)
+            # # -------------------------------------------------------------------
+            # # 특징 재투영
+            # # -------------------------------------------------------------------
+            # proj_feat_p2c, mask_feat_p2c = get_projected_image(CURR_G_2D, PREV_G_2D, CURR_XYZ_14_FLAT, PREV_MATRIX)
+            # proj_feat_n2c, mask_feat_n2c = get_projected_image(CURR_G_2D, NEXT_G_2D, CURR_XYZ_14_FLAT, NEXT_MATRIX)
 
+            # loss_reproj = criterion_feature_reprojection(CURR_G_2D, proj_feat_p2c, mask_feat_p2c, proj_feat_n2c, mask_feat_n2c)
+
+            # # -------------------------------------------------------------------
+            # # RGB 재투영
+            # # -------------------------------------------------------------------
+            # proj_rgb_prev_28, mask_rgb_prev_28 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[0], PREV_MATRIX)
+            # proj_rgb_next_28, mask_rgb_next_28 = get_projected_image(curr_image_vis, next_image_vis, XYZ[0], NEXT_MATRIX)
+            # loss_rgb_reproj_28 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_28, mask_rgb_prev_28, proj_rgb_next_28, mask_rgb_next_28)
+
+            # proj_rgb_prev_56, mask_rgb_prev_56 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[1], PREV_MATRIX)
+            # proj_rgb_next_56, mask_rgb_next_56 = get_projected_image(curr_image_vis, next_image_vis, XYZ[1], NEXT_MATRIX)
+            # loss_rgb_reproj_56 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_56, mask_rgb_prev_56, proj_rgb_next_56, mask_rgb_next_56)
+
+            # proj_rgb_prev_112, mask_rgb_prev_112 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[2], PREV_MATRIX)
+            # proj_rgb_next_112, mask_rgb_next_112 = get_projected_image(curr_image_vis, next_image_vis, XYZ[2], NEXT_MATRIX)
+            # loss_rgb_reproj_112 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_112, mask_rgb_prev_112, proj_rgb_next_112, mask_rgb_next_112)
+
+            # proj_rgb_prev_224, mask_rgb_prev_224 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[3], PREV_MATRIX)
+            # proj_rgb_next_224, mask_rgb_next_224 = get_projected_image(curr_image_vis, next_image_vis, XYZ[3], NEXT_MATRIX)
+            # loss_rgb_reproj_224 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_224, mask_rgb_prev_224, proj_rgb_next_224, mask_rgb_next_224)
+
+            # loss_rgb_reproj = (loss_rgb_reproj_224 * 1.0 + loss_rgb_reproj_112 * 0.1 + loss_rgb_reproj_56 * 0.001 + loss_rgb_reproj_28 * 0.0001)
+
+            # -------------------------------------------------------------------
+            # [추가] RGB 사진 멀티스케일 축소 (mode='area' 사용)
+            # -------------------------------------------------------------------
+            c_img_28 = F.interpolate(curr_image_vis, size=(28, 28), mode='area')
+            p_img_28 = F.interpolate(prev_image_vis, size=(28, 28), mode='area')
+            n_img_28 = F.interpolate(next_image_vis, size=(28, 28), mode='area')
+
+            c_img_56 = F.interpolate(curr_image_vis, size=(56, 56), mode='area')
+            p_img_56 = F.interpolate(prev_image_vis, size=(56, 56), mode='area')
+            n_img_56 = F.interpolate(next_image_vis, size=(56, 56), mode='area')
+
+            c_img_112 = F.interpolate(curr_image_vis, size=(112, 112), mode='area')
+            p_img_112 = F.interpolate(prev_image_vis, size=(112, 112), mode='area')
+            n_img_112 = F.interpolate(next_image_vis, size=(112, 112), mode='area')
+
+            # -------------------------------------------------------------------
+            # 특징 재투영 (기존 코드 그대로 유지 - 224 행렬을 쓰지만 14x14로 줄여서 쓰므로 정상 작동)
+            # -------------------------------------------------------------------
+            proj_feat_p2c, mask_feat_p2c = get_projected_image(CURR_G_2D, PREV_G_2D, CURR_XYZ_14_FLAT, OUTPUTS['PREV_MATRIX_14'])
+            proj_feat_n2c, mask_feat_n2c = get_projected_image(CURR_G_2D, NEXT_G_2D, CURR_XYZ_14_FLAT, OUTPUTS['NEXT_MATRIX_14'])
             loss_reproj = criterion_feature_reprojection(CURR_G_2D, proj_feat_p2c, mask_feat_p2c, proj_feat_n2c, mask_feat_n2c)
 
             # -------------------------------------------------------------------
-            # RGB 재투영
+            # RGB 멀티스케일 재투영 (각 스케일에 맞는 사진, XYZ, MATRIX 투입!)
             # -------------------------------------------------------------------
-            proj_rgb_prev_28, mask_rgb_prev_28 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[0], PREV_MATRIX)
-            proj_rgb_next_28, mask_rgb_next_28 = get_projected_image(curr_image_vis, next_image_vis, XYZ[0], NEXT_MATRIX)
-            loss_rgb_reproj_28 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_28, mask_rgb_prev_28, proj_rgb_next_28, mask_rgb_next_28)
+            # 28x28 (가장 단단한 뼈대)
+            proj_rgb_prev_28, mask_rgb_prev_28 = get_projected_image(c_img_28, p_img_28, XYZ[0], PREV_MATRIX[0])
+            proj_rgb_next_28, mask_rgb_next_28 = get_projected_image(c_img_28, n_img_28, XYZ[0], NEXT_MATRIX[0])
+            loss_rgb_reproj_28 = criterion_rgb_reprojection(c_img_28, p_img_28, n_img_28, proj_rgb_prev_28, mask_rgb_prev_28, proj_rgb_next_28, mask_rgb_next_28)
 
-            proj_rgb_prev_56, mask_rgb_prev_56 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[1], PREV_MATRIX)
-            proj_rgb_next_56, mask_rgb_next_56 = get_projected_image(curr_image_vis, next_image_vis, XYZ[1], NEXT_MATRIX)
-            loss_rgb_reproj_56 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_56, mask_rgb_prev_56, proj_rgb_next_56, mask_rgb_next_56)
+            # 56x56
+            proj_rgb_prev_56, mask_rgb_prev_56 = get_projected_image(c_img_56, p_img_56, XYZ[1], PREV_MATRIX[1])
+            proj_rgb_next_56, mask_rgb_next_56 = get_projected_image(c_img_56, n_img_56, XYZ[1], NEXT_MATRIX[1])
+            loss_rgb_reproj_56 = criterion_rgb_reprojection(c_img_56, p_img_56, n_img_56, proj_rgb_prev_56, mask_rgb_prev_56, proj_rgb_next_56, mask_rgb_next_56)
 
-            proj_rgb_prev_112, mask_rgb_prev_112 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[2], PREV_MATRIX)
-            proj_rgb_next_112, mask_rgb_next_112 = get_projected_image(curr_image_vis, next_image_vis, XYZ[2], NEXT_MATRIX)
-            loss_rgb_reproj_112 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_112, mask_rgb_prev_112, proj_rgb_next_112, mask_rgb_next_112)
+            # 112x112
+            proj_rgb_prev_112, mask_rgb_prev_112 = get_projected_image(c_img_112, p_img_112, XYZ[2], PREV_MATRIX[2])
+            proj_rgb_next_112, mask_rgb_next_112 = get_projected_image(c_img_112, n_img_112, XYZ[2], NEXT_MATRIX[2])
+            loss_rgb_reproj_112 = criterion_rgb_reprojection(c_img_112, p_img_112, n_img_112, proj_rgb_prev_112, mask_rgb_prev_112, proj_rgb_next_112, mask_rgb_next_112)
 
-            proj_rgb_prev_224, mask_rgb_prev_224 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[3], PREV_MATRIX)
-            proj_rgb_next_224, mask_rgb_next_224 = get_projected_image(curr_image_vis, next_image_vis, XYZ[3], NEXT_MATRIX)
+            # 224x224 (가장 날카로운 엣지)
+            proj_rgb_prev_224, mask_rgb_prev_224 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[3], PREV_MATRIX[3])
+            proj_rgb_next_224, mask_rgb_next_224 = get_projected_image(curr_image_vis, next_image_vis, XYZ[3], NEXT_MATRIX[3])
             loss_rgb_reproj_224 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_224, mask_rgb_prev_224, proj_rgb_next_224, mask_rgb_next_224)
 
-            loss_rgb_reproj = (loss_rgb_reproj_224 * 1.0 + loss_rgb_reproj_112 * 0.5 + loss_rgb_reproj_56 * 0.25 + loss_rgb_reproj_28 * 0.125)
+            # 총합 로스 (저해상도일수록 뼈대를 잡는 역할이므로 가중치를 동일하거나 비슷하게 부여!)
+            loss_rgb_reproj = (loss_rgb_reproj_224 * 1.0 + loss_rgb_reproj_112 * 1.0 + loss_rgb_reproj_56 * 1.0 + loss_rgb_reproj_28 * 1.0)
 
             # -------------------------------------------------------------------
             # edge loss

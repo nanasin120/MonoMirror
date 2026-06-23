@@ -24,8 +24,8 @@ def save_fixed_sample_v4(model, dataset, epoch, save_path, device):
         # V4에 맞게 깔끔해진 출력값 추출
         CURR_XYZ = OUTPUTS['XYZ'][-1]
         CURR_DISP = OUTPUTS['DISP'][-1]
-        PREV_MATRIX = OUTPUTS['PREV_MATRIX']
-        NEXT_MATRIX = OUTPUTS['NEXT_MATRIX']
+        PREV_MATRIX = OUTPUTS['PREV_MATRIX'][-1]
+        NEXT_MATRIX = OUTPUTS['NEXT_MATRIX'][-1]
 
         # RGB 재투영 (224x224)
         proj_img_p2c, mask_p2c = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
