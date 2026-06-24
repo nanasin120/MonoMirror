@@ -2,7 +2,6 @@ import os
 from torch.utils.data import Dataset
 from PIL import Image
 from torchvision import transforms
-from torchvision.transforms.v2 import GaussianNoise
 
 class ImageDataset(Dataset):
     def __init__(self, img_dir, feat_dir, frame_interval):
@@ -14,7 +13,7 @@ class ImageDataset(Dataset):
         self.transform_vis = transforms.Compose([
             transforms.Resize(224),
             transforms.CenterCrop(224),
-            transforms.ToTensor() 
+            transforms.ToTensor(),
         ])
 
         self.transform_model = transforms.Compose([
@@ -24,11 +23,12 @@ class ImageDataset(Dataset):
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
-        jitter_prob = 0.5
-        self.transform = transforms.RandomApply([
-            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-            GaussianNoise(mean=0.0, sigma=0.1)
-        ], p=jitter_prob)
+
+        # jitter_prob = 0.5
+        # self.transform = transforms.RandomApply([
+        #     transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+        #     GaussianNoise(mean=0.0, sigma=0.1)
+        # ], p=jitter_prob)
 
         self.images_vis = []
         self.images_model = []
@@ -48,7 +48,7 @@ class ImageDataset(Dataset):
 
         return {
             'prev_image_vis' : self.images_vis[idx],
-            'curr_image_vis' : self.transform(self.images_vis[idx + self.frame_interval]),
+            'curr_image_vis' : self.images_vis[idx + self.frame_interval],
             'next_image_vis' : self.images_vis[idx + self.frame_interval * 2],
 
             'prev_image_model' : self.images_model[idx],

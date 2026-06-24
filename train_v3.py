@@ -10,6 +10,7 @@ import os
 import time
 from collections import defaultdict
 from torch.optim import Optimizer
+import random
 
 class Lookahead(Optimizer):
     def __init__(self, optimizer, k=5, alpha=0.5):
@@ -67,8 +68,8 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 img_dir = r'./dataset/laptop_dataset'
 feat_dir = r'./dataset/dino_features'
-img_dir = r'/content/data_local'
-feat_dir = r'/content/feature_local'
+# img_dir = r'/content/data_local'
+# feat_dir = r'/content/feature_local'
 full_dataset = ImageDataset(img_dir=img_dir, feat_dir=feat_dir, frame_interval=3)
 
 dataloader = DataLoader(
@@ -111,6 +112,14 @@ optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=ADDITIONAL_EPOCH, eta_min=1e-6)
 # scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer.optimizer, T_0=50, T_mult=1, eta_min=1e-6)
 
+def draw_vertical_lines(tensor):
+    t = tensor.clone()
+    t[:, 0, :, ::2] = 0.0
+    t[:, 1, :, ::2] = 0.0
+    t[:, 2, :, ::2] = 0.0
+    return t
+
+
 def train():
     print('TRAIN START')
     best_avg_loss = float('inf')
@@ -131,6 +140,11 @@ def train():
             prev_image_vis = batch['prev_image_vis'].to(DEVICE)
             curr_image_vis = batch['curr_image_vis'].to(DEVICE)
             next_image_vis = batch['next_image_vis'].to(DEVICE)
+
+            if random.random() > 0.75:
+                prev_image_vis = draw_vertical_lines(prev_image_vis)
+                curr_image_vis = draw_vertical_lines(curr_image_vis)
+                next_image_vis = draw_vertical_lines(next_image_vis)
 
             prev_image_model = batch['prev_image_model'].to(DEVICE)
             curr_image_model = batch['curr_image_model'].to(DEVICE)
@@ -195,10 +209,10 @@ def train():
             loss_piece = (loss_piece_1 + loss_piece_2 + loss_piece_3) / 3.0
 
             # 가중치 설정
-            weight_reproj = 1.0
-            weight_rgb = 1.0
+            weight_reproj = 5.0
+            weight_rgb = 5.0
             weight_consist = 1.0
-            weight_smooth = 0.01
+            weight_smooth = 0.001
             weight_piece = 0.001
             if epoch < 100:
                 weight_surface = 0.0

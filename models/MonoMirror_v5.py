@@ -616,9 +616,9 @@ class CostVolumeBuilder(nn.Module): # Cost Volume 만들기
 
         return cost_volume
 
-class MonoMirror_v4(nn.Module):
+class MonoMirror_v5(nn.Module):
     def __init__(self):
-        super(MonoMirror_v4, self).__init__()
+        super(MonoMirror_v5, self).__init__()
 
         self.encoder = DINOv2Encoder()
         
@@ -702,16 +702,55 @@ class MonoMirror_v4(nn.Module):
 
         CV_COMBINED = (CV_PREV + CV_NEXT) / 2.0
 
-        CURR_UP_F, _ = self.upsampler(CURR_G, CURR_F, CURR_RGB_F, CV_COMBINED)
+        CURR_UP_F, DISP = self.upsampler(CURR_G, CURR_F, CURR_RGB_F, CV_COMBINED)
 
-        DISP = self.depth_Head_224(CURR_UP_F[-1])[-1]
+        def scale_K(K_mat, scale_factor):
+            K_scaled = K_mat.clone()
+            K_scaled[:, 0, :] *= scale_factor
+            K_scaled[:, 1, :] *= scale_factor
+            return K_scaled
 
-        CURR_Z = 1.0 / (self.d_min + (self.d_max - self.d_min) * DISP)
+        K_224 = K
+        K_112 = scale_K(K, 112.0 / 224.0)
+        K_56  = scale_K(K, 56.0 / 224.0)
+        K_28  = scale_K(K, 28.0 / 224.0)
+        K_14 = scale_K(K, 14.0 / 224.0)
 
-        PREV_MATRIX, _ = self.get_MATRIX(B, K, E_CURR_PREV, E_CURR_PREV_INV)
-        NEXT_MATRIX, _ = self.get_MATRIX(B, K, E_CURR_NEXT, E_CURR_NEXT_INV)
+        PREV_MAT_14, _ = self.get_MATRIX(B, K_14, E_CURR_PREV, E_CURR_PREV_INV)
+        NEXT_MAT_14, _ = self.get_MATRIX(B, K_14, E_CURR_NEXT, E_CURR_NEXT_INV)
 
-        CURR_XYZ = self.get_XYZ(B, CURR_Z, K, H, W)
+        PREV_MAT_28, _  = self.get_MATRIX(B, K_28, E_CURR_PREV, E_CURR_PREV_INV)
+        NEXT_MAT_28, _  = self.get_MATRIX(B, K_28, E_CURR_NEXT, E_CURR_NEXT_INV)
+        
+        PREV_MAT_56, _  = self.get_MATRIX(B, K_56, E_CURR_PREV, E_CURR_PREV_INV)
+        NEXT_MAT_56, _  = self.get_MATRIX(B, K_56, E_CURR_NEXT, E_CURR_NEXT_INV)
+        
+        PREV_MAT_112, _ = self.get_MATRIX(B, K_112, E_CURR_PREV, E_CURR_PREV_INV)
+        NEXT_MAT_112, _ = self.get_MATRIX(B, K_112, E_CURR_NEXT, E_CURR_NEXT_INV)
+        
+        PREV_MAT_224, _ = self.get_MATRIX(B, K_224, E_CURR_PREV, E_CURR_PREV_INV)
+        NEXT_MAT_224, _ = self.get_MATRIX(B, K_224, E_CURR_NEXT, E_CURR_NEXT_INV)
+
+        DISP[0] = F.interpolate(DISP[0], size=(H, W), mode='nearest')
+        DISP[1] = F.interpolate(DISP[1], size=(H, W), mode='nearest')
+        DISP[2] = F.interpolate(DISP[2], size=(H, W), mode='nearest')
+
+        CURR_Z_28  = 1.0 / (self.d_min + (self.d_max - self.d_min) * DISP[0])
+        CURR_Z_56  = 1.0 / (self.d_min + (self.d_max - self.d_min) * DISP[1])
+        CURR_Z_112 = 1.0 / (self.d_min + (self.d_max - self.d_min) * DISP[2])
+        CURR_Z_224 = 1.0 / (self.d_min + (self.d_max - self.d_min) * DISP[3])
+
+        CURR_XYZ_28  = self.get_XYZ(B, CURR_Z_28, K, H, W)
+        CURR_XYZ_56  = self.get_XYZ(B, CURR_Z_56, K, H, W)
+        CURR_XYZ_112 = self.get_XYZ(B, CURR_Z_112, K, H, W)
+        CURR_XYZ_224 = self.get_XYZ(B, CURR_Z_224, K, H, W)
+
+        # CURR_XYZ_28 = self.get_XYZ(B, CURR_Z_28, K)
+        # CURR_XYZ_56 = self.get_XYZ(B, CURR_Z_56, K)
+        # CURR_XYZ_112 = self.get_XYZ(B, CURR_Z_112, K)
+        # CURR_XYZ_224 = self.get_XYZ(B, CURR_Z_224, K)
+
+        CURR_Z = CURR_Z_224
 
         if sfs:
             print(f"--- [Fixed Sample Monitoring] ---")
@@ -724,9 +763,12 @@ class MonoMirror_v4(nn.Module):
 
         return {
             'DISP' : DISP,
-            'XYZ' : CURR_XYZ, 
-            'PREV_MATRIX' : PREV_MATRIX,
-            'NEXT_MATRIX' : NEXT_MATRIX,
+            'XYZ' : [CURR_XYZ_28, CURR_XYZ_56, CURR_XYZ_112, CURR_XYZ_224], 
+            'PREV_MATRIX' : [PREV_MAT_28, PREV_MAT_56, PREV_MAT_112, PREV_MAT_224],
+            'NEXT_MATRIX' : [NEXT_MAT_28, NEXT_MAT_56, NEXT_MAT_112, NEXT_MAT_224],
+            'PREV_G_RAW' : PREV_G_RAW,
+            'CURR_G_RAW' : CURR_G_RAW,
+            'NEXT_G_RAW' : NEXT_G_RAW,
         }
     
     def get_XYZ(self, B, Z, K, H, W):

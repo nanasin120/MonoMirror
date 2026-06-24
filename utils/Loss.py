@@ -110,8 +110,8 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
         # 이미지 색상이 변하면 깊이 평활화를 꺼버림 (exp(-색상변화))
         # 색상 변화가 클수록 가중치가 0에 가까워져서 Smooth Loss가 무시됨
         # [B, 1, H, W-1], [B, 1, H-1, W]
-        weight_x = torch.exp(-img_dx * 150.0)
-        weight_y = torch.exp(-img_dy * 150.0)
+        weight_x = torch.exp(-img_dx * 100.0)
+        weight_y = torch.exp(-img_dy * 100.0)
 
         pad_mask = (img.sum(dim=1, keepdim=True) > 0).float()
         mask_x = pad_mask[:, :, :, :-1] * pad_mask[:, :, :, 1:]
@@ -411,8 +411,8 @@ class Surface_Normal_Consistency_Loss(nn.Module): # 표면 벡터를 이용한 L
         img_dy = torch.abs(image[:, :, :-1, :] - image[:, :, 1:, :]).mean(dim=1, keepdim=True)
         
         # 테두리에는 벌점을 주지 않음
-        weight_x = torch.exp(-img_dx * 150.0)
-        weight_y = torch.exp(-img_dy * 150.0)
+        weight_x = torch.exp(-img_dx * 100.0)
+        weight_y = torch.exp(-img_dy * 100.0)
         
         # 최종 Loss 계산
         loss_x = (N_dx * weight_x).mean()
@@ -502,8 +502,8 @@ class new_Piecewise_Planar_Loss(nn.Module):
         img_dx = F.pad(img_dx, (0, 2, 0, 0), mode='replicate')
         img_dy = F.pad(img_dy, (0, 0, 0, 2), mode='replicate')
         
-        weight_x = torch.exp(-img_dx * 50.0)
-        weight_y = torch.exp(-img_dy * 50.0)
+        weight_x = torch.exp(-img_dx * 100.0)
+        weight_y = torch.exp(-img_dy * 100.0)
         
         loss_x = (dot_x * weight_x).mean()
         loss_y = (dot_y * weight_y).mean()

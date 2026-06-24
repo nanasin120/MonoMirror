@@ -2,20 +2,19 @@ import torch
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from models.MonoMirror_v4 import MonoMirror_v4
+from models.MonoMirror_v5 import MonoMirror_v5
 from data.ImageDataset import ImageDataset
-from defs import get_projected_image, save_fixed_sample_v4
+from defs import get_projected_image, save_fixed_sample_v5
 from utils.Loss import Edge_Aware_Smooth_Loss, Feature_Reprojection_Loss, RGB_Reprojection_Loss, Surface_Normal_Consistency_Loss, new_Piecewise_Planar_Loss
 import os
 import time
-import random
 
 model_save_path = r'./save/model_save'
 if not os.path.exists(model_save_path): os.makedirs(model_save_path)
 img_save_path = r'./save/image_save'
 if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
-BATCH = 4
+BATCH = 2
 START_EPOCH = 0
 END_EPOCH = 500
 ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
@@ -37,7 +36,7 @@ dataloader = DataLoader(
     pin_memory=True
 )
 
-model = MonoMirror_v4().to(DEVICE)
+model = MonoMirror_v5().to(DEVICE)
 
 criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
 criterion_feature_reprojection = Feature_Reprojection_Loss().to(DEVICE)
@@ -51,9 +50,9 @@ scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=ADDITIONAL_EPO
 
 def draw_vertical_lines(tensor):
     t = tensor.clone()
-    t[:, 0, :, ::4] = 225.0
-    t[:, 1, :, ::4] = 225.0
-    t[:, 2, :, ::4] = 225.0
+    t[:, 0, :, ::2] = 0.0
+    t[:, 1, :, ::2] = 0.0
+    t[:, 2, :, ::2] = 0.0
     return t
 
 def train():
@@ -78,14 +77,13 @@ def train():
             curr_image_vis = batch['curr_image_vis'].to(DEVICE)
             next_image_vis = batch['next_image_vis'].to(DEVICE)
 
+            prev_image_vis = draw_vertical_lines(prev_image_vis)
+            curr_image_vis = draw_vertical_lines(curr_image_vis)
+            next_image_vis = draw_vertical_lines(next_image_vis)
+
             prev_image_model = batch['prev_image_model'].to(DEVICE)
             curr_image_model = batch['curr_image_model'].to(DEVICE)
             next_image_model = batch['next_image_model'].to(DEVICE)
-
-            if random.random() > 0.75:
-                prev_image_vis = draw_vertical_lines(prev_image_vis)
-                curr_image_vis = draw_vertical_lines(curr_image_vis)
-                next_image_vis = draw_vertical_lines(next_image_vis)
 
             OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, False)
 
@@ -93,38 +91,88 @@ def train():
             XYZ = OUTPUTS['XYZ']
             PREV_MATRIX = OUTPUTS['PREV_MATRIX']
             NEXT_MATRIX = OUTPUTS['NEXT_MATRIX']
+            PREV_G = OUTPUTS['PREV_G_RAW']
+            CURR_G = OUTPUTS['CURR_G_RAW']
+            NEXT_G = OUTPUTS['NEXT_G_RAW']
+
+            CURR_DISP = DISP[3]
+            CURR_XYZ = XYZ[3]
+
+            B, _, C = CURR_G.shape
+
+            PREV_G_2D = PREV_G.transpose(1, 2).view(B, C, 14, 14)
+            CURR_G_2D = CURR_G.transpose(1, 2).view(B, C, 14, 14)
+            NEXT_G_2D = NEXT_G.transpose(1, 2).view(B, C, 14, 14)
+
+            PREV_G_2D = F.interpolate(PREV_G_2D, size=(224, 224), mode='nearest')
+            CURR_G_2D = F.interpolate(CURR_G_2D, size=(224, 224), mode='nearest')
+            NEXT_G_2D = F.interpolate(NEXT_G_2D, size=(224, 224), mode='nearest')
+            
+            # -------------------------------------------------------------------
+            # 특징 재투영
+            # -------------------------------------------------------------------
+            proj_feat_p2c_28, mask_feat_p2c_28 = get_projected_image(CURR_G_2D, PREV_G_2D, XYZ[0], PREV_MATRIX[-1])
+            proj_feat_n2c_28, mask_feat_n2c_28 = get_projected_image(CURR_G_2D, NEXT_G_2D, XYZ[0], NEXT_MATRIX[-1])
+            loss_reproj_28 = criterion_feature_reprojection(CURR_G_2D, proj_feat_p2c_28, mask_feat_p2c_28, proj_feat_n2c_28, mask_feat_n2c_28)
+            
+            proj_feat_p2c_56, mask_feat_p2c_56 = get_projected_image(CURR_G_2D, PREV_G_2D, XYZ[0], PREV_MATRIX[-1])
+            proj_feat_n2c_56, mask_feat_n2c_56 = get_projected_image(CURR_G_2D, NEXT_G_2D, XYZ[0], NEXT_MATRIX[-1])
+            loss_reproj_56 = criterion_feature_reprojection(CURR_G_2D, proj_feat_p2c_56, mask_feat_p2c_56, proj_feat_n2c_56, mask_feat_n2c_56)
+            
+            proj_feat_p2c_112, mask_feat_p2c_112 = get_projected_image(CURR_G_2D, PREV_G_2D, XYZ[0], PREV_MATRIX[-1])
+            proj_feat_n2c_112, mask_feat_n2c_112 = get_projected_image(CURR_G_2D, NEXT_G_2D, XYZ[0], NEXT_MATRIX[-1])
+            loss_reproj_112 = criterion_feature_reprojection(CURR_G_2D, proj_feat_p2c_112, mask_feat_p2c_112, proj_feat_n2c_112, mask_feat_n2c_112)
+            
+            proj_feat_p2c_224, mask_feat_p2c_224 = get_projected_image(CURR_G_2D, PREV_G_2D, XYZ[0], PREV_MATRIX[-1])
+            proj_feat_n2c_224, mask_feat_n2c_224 = get_projected_image(CURR_G_2D, NEXT_G_2D, XYZ[0], NEXT_MATRIX[-1])
+            loss_reproj_224 = criterion_feature_reprojection(CURR_G_2D, proj_feat_p2c_224, mask_feat_p2c_224, proj_feat_n2c_224, mask_feat_n2c_224)
+
+            loss_reproj = (loss_reproj_224 * 1.0 + loss_reproj_112 * 0.1 + loss_reproj_56 * 0.001 + loss_reproj_28 * 0.0001)
 
             # -------------------------------------------------------------------
             # RGB 재투영
             # -------------------------------------------------------------------
+            proj_rgb_prev_28, mask_rgb_prev_28 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[0], PREV_MATRIX[-1])
+            proj_rgb_next_28, mask_rgb_next_28 = get_projected_image(curr_image_vis, next_image_vis, XYZ[0], NEXT_MATRIX[-1])
+            loss_rgb_reproj_28 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_28, mask_rgb_prev_28, proj_rgb_next_28, mask_rgb_next_28)
 
-            proj_rgb_prev, mask_rgb_prev = get_projected_image(curr_image_vis, prev_image_vis, XYZ, PREV_MATRIX)
-            proj_rgb_next, mask_rgb_next = get_projected_image(curr_image_vis, next_image_vis, XYZ, NEXT_MATRIX)
-            loss_rgb_reproj = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev, mask_rgb_prev, proj_rgb_next, mask_rgb_next)
+            proj_rgb_prev_56, mask_rgb_prev_56 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[1], PREV_MATRIX[-1])
+            proj_rgb_next_56, mask_rgb_next_56 = get_projected_image(curr_image_vis, next_image_vis, XYZ[1], NEXT_MATRIX[-1])
+            loss_rgb_reproj_56 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_56, mask_rgb_prev_56, proj_rgb_next_56, mask_rgb_next_56)
+
+            proj_rgb_prev_112, mask_rgb_prev_112 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[2], PREV_MATRIX[-1])
+            proj_rgb_next_112, mask_rgb_next_112 = get_projected_image(curr_image_vis, next_image_vis, XYZ[2], NEXT_MATRIX[-1])
+            loss_rgb_reproj_112 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_112, mask_rgb_prev_112, proj_rgb_next_112, mask_rgb_next_112)
+
+            proj_rgb_prev_224, mask_rgb_prev_224 = get_projected_image(curr_image_vis, prev_image_vis, XYZ[3], PREV_MATRIX[-1])
+            proj_rgb_next_224, mask_rgb_next_224 = get_projected_image(curr_image_vis, next_image_vis, XYZ[3], NEXT_MATRIX[-1])
+            loss_rgb_reproj_224 = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev_224, mask_rgb_prev_224, proj_rgb_next_224, mask_rgb_next_224)
+
+            loss_rgb_reproj = (loss_rgb_reproj_224 * 1.0 + loss_rgb_reproj_112 * 0.1 + loss_rgb_reproj_56 * 0.001 + loss_rgb_reproj_28 * 0.0001)
 
             # -------------------------------------------------------------------
             # edge loss
             # -------------------------------------------------------------------
-            loss_smoothloss = criterion_edge_smooth(DISP, curr_image_vis)
+            loss_smoothloss = criterion_edge_smooth(CURR_DISP, curr_image_vis)
 
             # -------------------------------------------------------------------
             # surface loss
             # -------------------------------------------------------------------
-            loss_surface = criterion_surface_normal_consistency_loss(XYZ, curr_image_vis)
+            loss_surface = criterion_surface_normal_consistency_loss(CURR_XYZ, curr_image_vis)
 
             # -------------------------------------------------------------------
             # piece loss
             # -------------------------------------------------------------------
-            loss_piece = criterion_piece_planar_loss(DISP, curr_image_vis)
+            loss_piece = criterion_piece_planar_loss(CURR_DISP, curr_image_vis)
 
             # 가중치 설정
-            weight_rgb = 5.0
-            weight_reproj = 0.0
+            weight_rgb = 1.0
+            weight_reproj = 1.0
             weight_smooth = 0.001
             weight_surface = 0.001
-            weight_piece = 0.0
+            weight_piece = 0.001
             
-            total_loss = (loss_rgb_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + (loss_surface * weight_surface) + (loss_piece * weight_piece)
+            total_loss = (loss_reproj * weight_reproj) + (loss_rgb_reproj * weight_rgb) + (loss_smoothloss * weight_smooth) + (loss_surface * weight_surface) + (loss_piece * weight_piece)
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -138,7 +186,7 @@ def train():
 
             train_loss += total_loss.item()
             train_smooth_loss += loss_smoothloss.item()
-            train_reproj_loss += loss_rgb_reproj.item()
+            train_reproj_loss += loss_reproj.item()
             train_rgb_loss += loss_rgb_reproj.item()
             train_surface_loss += loss_surface.item()
             train_piece_loss += loss_piece.item()
