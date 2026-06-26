@@ -17,20 +17,22 @@ Self-Supervised 3D Reconstruction from Monocular Vidio
 | **Driver** | 591.74 |
 | **OS** | Windows 11 |
 
+구글 코랩에서도 학습이 가능합니다.
+
 ## Project Overview
 Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연속된 단일 카메라 비디오 만을 이용하여 3D 공간 복원
 
 ## Architecture & Pipeline [IMAGE](./docs/ARCHTICTURE.md)
-- Backbone Network: DUSt3R
-- Encoder: CroCo (self made, Pre-trained Weights with same Monocular Video)
+- Encoder: DINOv2
 - Input Structure: 3-Frame Architecture (Prev, Curr, Next)
   - predict depth based on Curr frame, calculate Loss by Wraping Prev and Next Frame to Pixel
 - Loss Functions:
-  - Minimum Reprojection Loss (Weight: 0.8): 가려짐 및 시야각 이탈 문제를 해결하기 위해 과거/미래 프레임중 오차가 더 작은 쪽으로 학습
-  - Edge-Aware Smooth Loss (Weight: 0.05): Depth가 부드러운 평면을 유지하되, 물체의 경계선 입체감은 보존
+  - Minimum Reprojection Loss (Weight: 1.0)
+  - Edge-Aware Smooth Loss (Weight: 0.001)
+  - surface loss (Weight: 0.001)
 - Optimizer & Scheduler: AdamW(LR: 1e-4) + CosineAnnealingLR (Min LR: 1e-6)
 
-## 진행 상태 [바로가기](./docs/DEVLOG/DEVLOGv3.md)
+## 진행 상태 [바로가기](./docs/DEVLOG/DEVLOGv4.md)
 진행 상태 기록
 
 ## 문제 해결 기록 [바로가기](./docs/TROUBLESHOODING.md)
