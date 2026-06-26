@@ -213,6 +213,8 @@ def get_projected_image(img1, img2, X, MATRIX, cam_H=224, cam_W=224):
     
     valid_mask = (valid_z * valid_u * valid_v).view(B, 1, img_H, img_W)
 
+    
+
     return projected_img, valid_mask
 
 def visualize_points(X, image, z_scale=1.0):

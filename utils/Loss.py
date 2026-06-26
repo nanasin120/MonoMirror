@@ -113,6 +113,14 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
         weight_x = torch.exp(-img_dx * 100.0)
         weight_y = torch.exp(-img_dy * 100.0)
 
+        edge_mask_x = 1.0 - weight_x
+        edge_mask_y = 1.0 - weight_y
+
+        edge_mask_x_padded = F.pad(edge_mask_x, (0, 1, 0, 0), mode='replicate')
+        edge_mask_y_padded = F.pad(edge_mask_y, (0, 0, 0, 1), mode='replicate')
+
+        texture_mask = torch.maximum(edge_mask_x_padded, edge_mask_y_padded)
+
         pad_mask = (img.sum(dim=1, keepdim=True) > 0).float()
         mask_x = pad_mask[:, :, :, :-1] * pad_mask[:, :, :, 1:]
         mask_y = pad_mask[:, :, :-1, :] * pad_mask[:, :, 1:, :]
@@ -122,7 +130,9 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
         smoothness_x = disp_dx * weight_x * mask_x
         smoothness_y = disp_dy * weight_y * mask_y
 
-        return (smoothness_x.sum() + smoothness_y.sum()) / (mask_x.sum() + mask_y.sum() + 1e-8)
+        smoothness_loss = (smoothness_x.sum() + smoothness_y.sum()) / (mask_x.sum() + mask_y.sum() + 1e-8)
+
+        return smoothness_loss, texture_mask
 
 class SSIM(nn.Module): # 두 이미지가 얼마나 비슷한가
     def __init__(self, window_size = 3, C1 = 0.01 ** 2, C2 = 0.03 ** 2):
@@ -223,19 +233,17 @@ class Minimum_Reprojection_Loss(nn.Module):
 
         B, _, H, W = target_image.shape
 
-        bg_mask = (target_image.sum(dim=1, keepdim=True) > 0).float()
-
         projected_pe = self.pe(target_image, projected_image) # [B, 1, H, W]
         source_pe = self.pe(target_image, source_image) # [B, 1, H, W]
 
         # mask = (projected_pe < source_pe).float() # [B, 1, H, W]
         # mask = mask * bg_mask * valid_mask
 
-        # min_pe = torch.minimum(projected_pe, source_pe) # auto masking
+        min_pe = torch.minimum(projected_pe, source_pe) # auto masking
 
-        weight_loss = projected_pe * valid_mask * bg_mask # [B, 1, H, W]
+        weight_loss = min_pe * valid_mask # [B, 1, H, W]
         
-        return weight_loss.sum() / ((valid_mask * bg_mask).sum() + 1e-8)
+        return weight_loss.sum() / (valid_mask.sum() + 1e-8)
 
 class U3Frame_Loss(nn.Module): # 이전, 현재, 이후 를 이용한 재투영 오차 + 원본 오차
     def __init__(self):
