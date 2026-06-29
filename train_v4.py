@@ -42,7 +42,24 @@ criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
 criterion_rgb_reprojection = RGB_Reprojection_Loss().to(DEVICE)
 criterion_surface_normal_consistency_loss = Surface_Normal_Consistency_Loss().to(DEVICE)
 
-optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
+backbone_params = []
+head_params = []
+
+for name, param in model.named_parameters():
+    if not param.requires_grad:
+        continue
+        
+    if "encoder" in name:
+        backbone_params.append(param)
+    else:
+        head_params.append(param)
+
+optim_groups = [{'params': head_params, 'lr': 1e-4}]
+
+if len(backbone_params) > 0:
+    optim_groups.append({'params': backbone_params, 'lr': 1e-5})
+
+optimizer = optim.AdamW(optim_groups, weight_decay=1e-4)
 
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=ADDITIONAL_EPOCH, eta_min=1e-6)
 
@@ -99,7 +116,7 @@ def train():
 
             # 가중치 설정
             weight_rgb = 1.0
-            weight_smooth = 0.005
+            weight_smooth = 0.001
             weight_surface = 0.001
             
             total_loss = (loss_rgb_reproj * weight_rgb) + (loss_edge_smoothloss * weight_smooth) + (loss_surface * weight_surface)
