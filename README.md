@@ -5,6 +5,10 @@ Self-Supervised 3D Reconstruction from Monocular Vidio
 
 자기지도 학습을 하는 가장 큰 이유는 학습에 사용하는 컴퓨터가 개인용 게이밍 노트북이기 때문. 많은 데이터 이런건 학습 자체가 힘들어짐.
 
+## Introduction
+
+해당 프로젝트는 DTU dataset을 이용하였습니다.
+
 ## Environment & Hardware
 
 본 프로젝트는 다음 사양의 로컬 환경에서 개발 및 테스트되었습니다.
@@ -45,3 +49,20 @@ Lider 센서나 다중 카메라 비디오, 정답 데이터 없이 오직 연�
 <img width="672" height="672" alt="vis_epoch_500" src="https://github.com/user-attachments/assets/26cae321-6adf-4e71-9b88-99868cb6eb14" />
 
 깊이가 다른곳을 침투했다.
+
+# Citation
+This project uses the DTU MVS Dataset. I thank the authors for providing the data.
+
+```
+article{aanaes2016large,
+  author = {Aanaes, H. and Jensen, R. R. and Vogiatzis, G. and Tola, E. and Dahl, A. B.},
+  title = {Large-Scale Data for Multi-View Stereopsis},
+  journal = {International Journal of Computer Vision},
+  year = {2016},
+  volume = {120},
+  number = {2},
+  pages = {153--168}
+}
+```
+
+these datas are from https://roboimagedata.compute.dtu.dk/
