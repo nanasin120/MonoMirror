@@ -23,11 +23,9 @@ IMAGE_SAVE_INTERVEL = 5
 WEIGHT_SAVE_INTERVEL = 20
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-img_dir = r'./dataset/laptop_dataset'
-feat_dir = r'./dataset/dino_features'
-# img_dir = r'/content/data_local'
-# feat_dir = r'/content/feature_local'
-full_dataset = ImageDataset(img_dir=img_dir, feat_dir=feat_dir, frame_interval=1)
+dataset_dir = r'C:\Users\MSI\Desktop\DTU\scan65'
+# dataset_dir = r'/content/data_local'
+full_dataset = ImageDataset(img_dir=dataset_dir, frame_interval=1)
 
 dataloader = DataLoader(
     dataset=full_dataset,
