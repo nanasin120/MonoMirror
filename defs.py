@@ -8,7 +8,6 @@ import numpy as np
 def save_fixed_sample_v4(model, dataset, epoch, save_path, device):
     model.eval()
     with torch.no_grad():
-        # 고정된 첫 번째 데이터 가져오기
         sample = dataset[0]
 
         prev_image_vis = sample['prev_image_vis'].unsqueeze(0).to(device)
@@ -19,11 +18,12 @@ def save_fixed_sample_v4(model, dataset, epoch, save_path, device):
         curr_image_model = sample['curr_image_model'].unsqueeze(0).to(device)
         next_image_model = sample['next_image_model'].unsqueeze(0).to(device)
 
+        B, C, H, W = prev_image_vis.shape
+
         OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, True)
         
-        # V4에 맞게 깔끔해진 출력값 추출
-        CURR_XYZ = OUTPUTS['XYZ']
-        CURR_DISP = OUTPUTS['DISP']
+        CURR_XYZ = OUTPUTS['XYZ'][-1]
+        CURR_DISP = OUTPUTS['DISP'][-1]
         PREV_MATRIX = OUTPUTS['PREV_MATRIX']
         NEXT_MATRIX = OUTPUTS['NEXT_MATRIX']
 
@@ -31,14 +31,14 @@ def save_fixed_sample_v4(model, dataset, epoch, save_path, device):
         proj_img_p2c, mask_p2c = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
         proj_img_n2c, mask_n2c = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
 
-        # [꿀팁] Error Map 계산 (원본과 당겨온 사진의 차이, 0에 가까울수록 검은색)
-        error_p2c = torch.abs(curr_image_vis - proj_img_p2c) * mask_p2c
-        error_n2c = torch.abs(curr_image_vis - proj_img_n2c) * mask_n2c
+        error_p2c = (torch.abs(curr_image_vis - proj_img_p2c) * mask_p2c)
+        error_n2c = (torch.abs(curr_image_vis - proj_img_n2c) * mask_n2c)
 
-        # 오직 1장뿐인 소중하고 완벽한 현재 깊이 맵!
+        error_p2c[0] = error_p2c[0].mean(dim=0)
+        error_n2c[0] = error_n2c[0].mean(dim=0)
+
         viz_d_curr = get_depth_viz(CURR_DISP, curr_image_vis)
 
-        # 3x3 그리드 조립
         # 1행: 과거, 현재, 미래 (입력값)
         row1 = torch.cat([prev_image_vis[0], curr_image_vis[0], next_image_vis[0]], dim=2) 
         # 2행: 과거당겨옴, 현재깊이, 미래당겨옴 (핵심 결과)

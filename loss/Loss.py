@@ -132,7 +132,7 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
 
         smoothness_loss = (smoothness_x.sum() + smoothness_y.sum()) / (mask_x.sum() + mask_y.sum() + 1e-8)
 
-        return smoothness_loss, texture_mask
+        return smoothness_loss
 
 class SSIM(nn.Module): # 두 이미지가 얼마나 비슷한가
     def __init__(self, window_size = 3, C1 = 0.01 ** 2, C2 = 0.03 ** 2):
@@ -336,22 +336,28 @@ class Feature_Reprojection_Loss(nn.Module): # 재투영한 특징값 Loss
     def __init__(self):
         super(Feature_Reprojection_Loss, self).__init__()
 
-    def forward(self, curr_feature, projected_img_p2c, valid_mask_p2c, projected_img_n2c, valid_mask_n2c):
-        cos_sim_p = F.cosine_similarity(curr_feature, projected_img_p2c, dim=1).unsqueeze(1)
-        cos_sim_n = F.cosine_similarity(curr_feature, projected_img_n2c, dim=1).unsqueeze(1)
+    def forward(self, curr_feature, prev_feature, valid_mask_p2c, next_feature, valid_mask_n2c):
+        _, _, H, W = curr_feature.shape
+        
+        valid_mask_p2c_down = F.interpolate(valid_mask_p2c.float(), size=(H, W), mode='nearest')
+        valid_mask_n2c_down = F.interpolate(valid_mask_n2c.float(), size=(H, W), mode='nearest')
+
+        cos_sim_p = F.cosine_similarity(curr_feature, prev_feature, dim=1).unsqueeze(1)
+        cos_sim_n = F.cosine_similarity(curr_feature, next_feature, dim=1).unsqueeze(1)
         
         feat_loss_p = 1.0 - cos_sim_p
         feat_loss_n = 1.0 - cos_sim_n
         
-        # 마스크 밖의 픽셀은 오차를 무한대(9999)로 설정하여 선택되지 않게 함
-        feat_loss_p[~valid_mask_p2c.bool()] = 9999.0
-        feat_loss_n[~valid_mask_n2c.bool()] = 9999.0
+        # 2. 축소된 마스크를 bool로 다시 변환하여 적용
+        # 마스크 밖의 픽셀은 오차를 무한대(9999.0)로 설정하여 선택되지 않게 함
+        feat_loss_p[~valid_mask_p2c_down.bool()] = 9999.0
+        feat_loss_n[~valid_mask_n2c_down.bool()] = 9999.0
         
         # 가려진 부분(Occlusion) 자동 무시
         min_feat_loss = torch.minimum(feat_loss_p, feat_loss_n)
         
         # 합집합 마스크 생성 후 최종 평균 산출
-        valid_mask_feat_any = (valid_mask_p2c.bool() | valid_mask_n2c.bool()).float()
+        valid_mask_feat_any = (valid_mask_p2c_down.bool() | valid_mask_n2c_down.bool()).float()
         loss_reproj = (min_feat_loss * valid_mask_feat_any).sum() / (valid_mask_feat_any.sum() + 1e-8)
 
         return loss_reproj

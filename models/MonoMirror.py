@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.CroCo import CroCo
 from models.blocks import PositionalEncoding2D, MultiHead, FeedForwardNetwork
 from defs import axis_angle_to_matrix
 
@@ -52,8 +51,10 @@ class DepthHead(nn.Module):
         self.feature_mixer = nn.Sequential( 
             nn.Conv2d(in_channels=in_channel, out_channels=in_channel, kernel_size=3, padding=1),
             nn.GELU(),
+            nn.Conv2d(in_channels=in_channel, out_channels=in_channel, kernel_size=3, padding=1),
+            nn.GELU(),
         )
-        self.predictor = nn.Conv2d(in_channels=in_channel, out_channels=1, kernel_size=1)
+        self.predictor = nn.Conv2d(in_channels=in_channel, out_channels=1, kernel_size=3, padding=1)
 
         self.min_disp = min_disp
         self.max_disp = max_disp
@@ -70,11 +71,7 @@ class DepthHead(nn.Module):
         
         scaled_disp = self.min_disp + (self.max_disp - self.min_disp) * disp_raw 
         
-        # 1 / min_disp 아니면
-        # 1 / max_disp 이거임
-        Z_coord_safe = 1.0 / scaled_disp 
-
-        return Z_coord_safe, scaled_disp
+        return scaled_disp
     
 class ProjectionHead(nn.Module):
     def __init__(self, d_model=768):
@@ -155,7 +152,7 @@ class ProjectionHead(nn.Module):
         axis_angle = torch.tanh(extrinsic_raw[:, :3]) * 3.14159 / 3.0 # -3.14159 ~ 3.14159
         R = axis_angle_to_matrix(axis_angle) # [B, 3, 3]
         
-        translation = torch.tanh(extrinsic_raw[:, 3:6]) * 0.1
+        translation = torch.tanh(extrinsic_raw[:, 3:6]) * 1.0
         
         E = torch.eye(4, device=F1.device).unsqueeze(0).repeat(B, 1, 1) # [B, 4, 4]
         E[:, :3, :3] = R
@@ -168,19 +165,23 @@ class RGBFeatureHead(nn.Module):
         super(RGBFeatureHead, self).__init__()
 
         self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=4, kernel_size=3, stride=1, padding=1), # [224, 224]
+            nn.Conv2d(in_channels=3, out_channels=8, kernel_size=3, stride=1, padding=1), # [224, 224]
             nn.GELU()
         )
         self.conv2 = nn.Sequential(
-            nn.Conv2d(in_channels=4, out_channels=8, kernel_size=3, stride=2, padding=1), # [112, 112]
+            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=2, padding=1), # [112, 112]
             nn.GELU()
         )
         self.conv3 = nn.Sequential(
-            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=2, padding=1), # [56, 56]
+            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=2, padding=1), # [56, 56]
             nn.GELU()
         )
         self.conv4 = nn.Sequential(
-            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=2, padding=1), # [28, 28]
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2, padding=1), # [28, 28]
+            nn.GELU()
+        )
+        self.conv5 = nn.Sequential(
+            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=2, padding=1), # [14, 14]
             nn.GELU()
         )
 
@@ -189,13 +190,16 @@ class RGBFeatureHead(nn.Module):
         IMG_F_112 = self.conv2(IMG_F_224)
         IMG_F_56 = self.conv3(IMG_F_112)
         IMG_F_28 = self.conv4(IMG_F_56)
+        IMG_F_14 = self.conv5(IMG_F_28)
 
-        return IMG_F_224, IMG_F_112, IMG_F_56, IMG_F_28
+        return IMG_F_224, IMG_F_112, IMG_F_56, IMG_F_28, IMG_F_14
 
 class FeatureUpsampler(nn.Module):
     def __init__(self, in_channels=768, out_channels=32):
         super(FeatureUpsampler, self).__init__()
         self.in_channels = in_channels
+
+        self.fuse0 = nn.Sequential(nn.Conv2d(in_channels + 128, in_channels, kernel_size=3, padding=1), nn.GELU())
 
         self.up1 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
@@ -203,7 +207,7 @@ class FeatureUpsampler(nn.Module):
             nn.GroupNorm(16, 256), nn.GELU()
         )
         self.skip1 = nn.Sequential(nn.Conv2d(in_channels, 256, kernel_size=1))
-        self.fuse1 = nn.Sequential(nn.Conv2d(256 + 256 + 8, 256, kernel_size=3, padding=1), nn.GELU()) 
+        self.fuse1 = nn.Sequential(nn.Conv2d(256 + 256 + 64, 256, kernel_size=3, padding=1), nn.GELU()) 
         
         self.up2 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
@@ -211,7 +215,7 @@ class FeatureUpsampler(nn.Module):
             nn.GroupNorm(8, 128), nn.GELU()
         )
         self.skip2 = nn.Sequential(nn.Conv2d(in_channels, 128, kernel_size=1))
-        self.fuse2 = nn.Sequential(nn.Conv2d(128 + 128 + 4, 128, kernel_size=3, padding=1), nn.GELU())
+        self.fuse2 = nn.Sequential(nn.Conv2d(128 + 128 + 32, 128, kernel_size=3, padding=1), nn.GELU())
 
         self.up3 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
@@ -219,7 +223,7 @@ class FeatureUpsampler(nn.Module):
             nn.GroupNorm(8, 64), nn.GELU()
         )
         self.skip3 = nn.Sequential(nn.Conv2d(in_channels, 64, kernel_size=1))
-        self.fuse3 = nn.Sequential(nn.Conv2d(64 + 64, 64, kernel_size=3, padding=1), nn.GELU())
+        self.fuse3 = nn.Sequential(nn.Conv2d(64 + 64 + 16, 64, kernel_size=3, padding=1), nn.GELU())
 
         self.up4 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
@@ -227,10 +231,43 @@ class FeatureUpsampler(nn.Module):
             nn.GroupNorm(4, out_channels), nn.GELU()
         )
         self.skip4 = nn.Sequential(nn.Conv2d(in_channels, 32, kernel_size=1))
-        self.fuse4 = nn.Sequential(nn.Conv2d(32 + 32, out_channels, kernel_size=3, padding=1), nn.GELU())
+        self.fuse4 = nn.Sequential(nn.Conv2d(32 + 32 + 8, out_channels, kernel_size=3, padding=1), nn.GELU())
     
-        self.squeeze_56 = nn.Sequential(nn.Conv2d(16, 4, kernel_size=1), nn.GELU())
-        self.squeeze_28 = nn.Sequential(nn.Conv2d(32, 8, kernel_size=1), nn.GELU())
+        self.gate0 = nn.Sequential(
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(128, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+        self.gate1 = nn.Sequential(
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(64, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+        self.gate2 = nn.Sequential(
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(32, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+        self.gate3 = nn.Sequential(
+            nn.Conv2d(16, 16, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(16, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+        self.gate4 = nn.Sequential(
+            nn.Conv2d(8, 8, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(8, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+
+        for gate in [self.gate0, self.gate1, self.gate2, self.gate3, self.gate4]:
+            final_conv = gate[-2] 
+            nn.init.constant_(final_conv.weight, 0.0)
+            nn.init.constant_(final_conv.bias, -2.0)
 
     def forward(self, DINO_G, DINO_F, IMG_F):
         B = DINO_G.shape[0]
@@ -238,32 +275,44 @@ class FeatureUpsampler(nn.Module):
         x = DINO_G.transpose(1, 2).view(B, self.in_channels, 14, 14) # [B, 384, 14, 14]
 
         DINO_F_0, DINO_F_1, DINO_F_2, DINO_F_3 = [f.transpose(1, 2).view(B, self.in_channels, 14, 14) for f in DINO_F] # [B, 384, 14, 14]
-        IMG_F_224, IMG_F_112, IMG_F_56, IMG_F_28 = IMG_F
+        IMG_F_224, IMG_F_112, IMG_F_56, IMG_F_28, IMG_F_14 = IMG_F
 
-        IMG_F_28 = self.squeeze_28(IMG_F_28)
-        IMG_F_56 = self.squeeze_56(IMG_F_56)
+        gate0 = self.gate0(IMG_F_14)
+        gate1 = self.gate1(IMG_F_28)
+        gate2 = self.gate2(IMG_F_56)
+        gate3 = self.gate3(IMG_F_112)
+        gate4 = self.gate4(IMG_F_224)
+
+        GATE_IMG_F_14 = IMG_F_14 * gate0
+        GATE_IMG_F_28 = IMG_F_28 * gate1
+        GATE_IMG_F_56 = IMG_F_56 * gate2
+        GATE_IMG_F_112 = IMG_F_112 * gate3
+        GATE_IMG_F_224 = IMG_F_224 * gate4
         
+        x = torch.cat([x, GATE_IMG_F_14], dim=1)
+        x = self.fuse0(x)
+
         # 14 -> 28
         x = self.up1(x) # [B, 384, 14, 14] -> [B, 256, 28, 28]
         s1 = F.interpolate(self.skip1(DINO_F_3), size=(28, 28), mode='bilinear', align_corners=False) # [B, 384, 14, 14] -> [B, 256, 28, 28]
-        x = torch.cat([x, s1, IMG_F_28], dim=1) # [B, 256 + 256 + 32, 28, 28]
+        x = torch.cat([x, s1, GATE_IMG_F_28], dim=1) # [B, 256 + 256 + 32, 28, 28]
         out_28 = self.fuse1(x) # [B, 256 + 256 + 32, 28, 28] -> [B, 256, 28, 28]
 
         # 28 -> 56
         x = self.up2(out_28) # [B, 256, 28, 28] -> [B, 128, 56, 56]
         s2 = F.interpolate(self.skip2(DINO_F_2), size=(56, 56), mode='bilinear', align_corners=False) # [B, 384, 14, 14] -> [B, 128, 56, 56]
-        x = torch.cat([x, s2, IMG_F_56], dim=1) # [B, 128 + 128 + 16, 56, 56]
+        x = torch.cat([x, s2, GATE_IMG_F_56], dim=1) # [B, 128 + 128 + 16, 56, 56]
         out_56 = self.fuse2(x) 
 
         x = self.up3(out_56) 
         s3 = F.interpolate(self.skip3(DINO_F_1), size=(112, 112), mode='bilinear', align_corners=False) # [B, 384, 14, 14] -> [B, 64, 112, 112]
-        x = torch.cat([x, s3], dim=1) 
+        x = torch.cat([x, s3, GATE_IMG_F_112], dim=1) 
         out_112 = self.fuse3(x) 
 
         # 112 -> 224
         x = self.up4(out_112) 
         s4 = F.interpolate(self.skip4(DINO_F_0), size=(224, 224), mode='bilinear', align_corners=False) # [B, 384, 14, 14] -> [B, 32, 224, 224]
-        x = torch.cat([x, s4], dim=1) 
+        x = torch.cat([x, s4, GATE_IMG_F_224], dim=1) 
         out_224 = self.fuse4(x) 
 
         return [out_28, out_56, out_112, out_224]
@@ -271,35 +320,30 @@ class FeatureUpsampler(nn.Module):
 class DINOv2Encoder(nn.Module):
     def __init__(self):
         super().__init__()
-        # 1. DINOv2 vits14 모델 불러오기
         self.backbone = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')
         
-        # 2. 강제로 뽑아낼 트랜스포머 블록 번호 지정 (vits14는 총 12개 블록: 0~11)
-        # 보통 1/4 지점마다 하나씩 뽑아냅니다. (3번째, 6번째, 9번째, 12번째 층)
+        # 3번째, 6번째, 9번째, 12번째 층
         self.out_blocks = [2, 5, 8, 11] 
 
     def forward(self, x):
         # x: [B, 3, 224, 224] 크기의 원본 이미지
         
-        # 3. 마법의 함수! get_intermediate_layers를 사용하면 지정한 블록의 결과물을 리스트로 반환합니다.
-        # reshape=True를 하면 1D 시퀀스를 알아서 2D 격자(16x16) 형태 텐서로 바꿔줍니다.
         features = self.backbone.get_intermediate_layers(
             x, 
             n=self.out_blocks, 
-            reshape=False # (ImplicitDepthHead 코드에 맞게 1D 시퀀스로 받습니다)
+            reshape=False
         )
         
-        # features는 지정한 4개 블록의 출력 텐서가 담긴 리스트입니다.
-        # 각각의 형태는 [B, 256, 384] (Patch 개수 256개, 채널 384)
+        # [B, 256, 384] (Patch 개수 256개, 채널 384)
         
-        F_list = features      # 이것이 바로 ImplicitDepthHead에 들어갈 4개의 원시 정보!
-        G_curr = features[-1]  # 가장 마지막(12번째 층) 정보가 곧 글로벌 정보(G)가 됩니다.
+        F_list = features
+        G_curr = features[-1]
 
         return G_curr, F_list
 
-class MonoMirror_v4(nn.Module):
+class MonoMirror(nn.Module):
     def __init__(self):
-        super(MonoMirror_v4, self).__init__()
+        super().__init__()
 
         self.encoder = DINOv2Encoder()
         
@@ -321,6 +365,9 @@ class MonoMirror_v4(nn.Module):
         self.d_min = 0.4
         self.d_max = 15.0
 
+        self.depth_Head_28 = DepthHead(in_channel=256)
+        self.depth_Head_56 = DepthHead(in_channel=128)
+        self.depth_Head_112 = DepthHead(in_channel=64)
         self.depth_Head_224 = DepthHead(in_channel=32)
 
         H, W = 224, 224
@@ -367,12 +414,23 @@ class MonoMirror_v4(nn.Module):
 
         CURR_UP_F = self.upsampler(CURR_G, CURR_F, IMG_F)
 
-        CURR_Z, DISP = self.depth_Head_224(CURR_UP_F[-1])
+        DISP_28 = F.interpolate(self.depth_Head_28(CURR_UP_F[0]), (H, W), mode='bilinear', align_corners=False)
+        DISP_56 = F.interpolate(self.depth_Head_56(CURR_UP_F[1]), (H, W), mode='bilinear', align_corners=False)
+        DISP_112 = F.interpolate(self.depth_Head_112(CURR_UP_F[2]), (H, W), mode='bilinear', align_corners=False)
+        DISP_224 = self.depth_Head_224(CURR_UP_F[3])
+
+        Z_28 = 1.0 / (DISP_28 + 1e-6)
+        Z_56 = 1.0 / (DISP_56 + 1e-6)
+        Z_112 = 1.0 / (DISP_112 + 1e-6)
+        Z_224 = 1.0 / (DISP_224 + 1e-6)
 
         PREV_MATRIX, _ = self.get_MATRIX(B, K, E_CURR_PREV, E_CURR_PREV_INV)
         NEXT_MATRIX, _ = self.get_MATRIX(B, K, E_CURR_NEXT, E_CURR_NEXT_INV)
 
-        CURR_XYZ = self.get_XYZ(B, CURR_Z, K, H, W)
+        XYZ_28 = self.get_XYZ(B, Z_28, K, H, W)
+        XYZ_56 = self.get_XYZ(B, Z_56, K, H, W)
+        XYZ_112 = self.get_XYZ(B, Z_112, K, H, W)
+        XYZ_224 = self.get_XYZ(B, Z_224, K, H, W)
 
         if sfs:
             print(f"--- [Fixed Sample Monitoring] ---")
@@ -380,12 +438,13 @@ class MonoMirror_v4(nn.Module):
             print(f"K : \n{K}")
             print(f"E_CURR_PREV : \n{E_CURR_PREV}")
             print(f"E_CURR_NEXT : \n{E_CURR_NEXT}")
-            print(f"Z min: {CURR_Z.min().item():.4f}, Z max: {CURR_Z.max().item():.4f}, 갭: {(CURR_Z.max() - CURR_Z.min()).item():.4f}")
+            print(f"Z min: {Z_224.min().item():.4f}, Z max: {Z_224.max().item():.4f}, 갭: {(Z_224.max() - Z_224.min()).item():.4f}")
             print(f"---------------------------------")
 
         return {
-            'DISP' : DISP,
-            'XYZ' : CURR_XYZ, 
+            'DISP' : [DISP_28, DISP_56, DISP_112, DISP_224],
+            'XYZ' : [XYZ_28, XYZ_56, XYZ_112, XYZ_224], 
+            'FEATURE' : [PREV_G.transpose(1, 2).view(B, self.patch_embedded_dim, 14, 14), CURR_G.transpose(1, 2).view(B, self.patch_embedded_dim, 14, 14), NEXT_G.transpose(1, 2).view(B, self.patch_embedded_dim, 14, 14)],
             'PREV_MATRIX' : PREV_MATRIX,
             'NEXT_MATRIX' : NEXT_MATRIX,
         }

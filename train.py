@@ -2,10 +2,10 @@ import torch
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from models.MonoMirror_v4 import MonoMirror_v4
-from data.ImageDataset import ImageDataset
+from models.MonoMirror import MonoMirror
+from dataset.ImageDataset import ImageDataset
 from defs import get_projected_image, save_fixed_sample_v4
-from utils.Loss import Edge_Aware_Smooth_Loss, RGB_Reprojection_Loss, Surface_Normal_Consistency_Loss
+from loss.Loss import Edge_Aware_Smooth_Loss, RGB_Reprojection_Loss, Surface_Normal_Consistency_Loss, new_Piecewise_Planar_Loss, Feature_Reprojection_Loss
 import os
 import time
 
@@ -25,8 +25,8 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 img_dir = r'./dataset/laptop_dataset'
 feat_dir = r'./dataset/dino_features'
-img_dir = r'/content/data_local'
-feat_dir = r'/content/feature_local'
+# img_dir = r'/content/data_local'
+# feat_dir = r'/content/feature_local'
 full_dataset = ImageDataset(img_dir=img_dir, feat_dir=feat_dir, frame_interval=1)
 
 dataloader = DataLoader(
@@ -36,11 +36,13 @@ dataloader = DataLoader(
     pin_memory=True
 )
 
-model = MonoMirror_v4().to(DEVICE)
+model = MonoMirror().to(DEVICE)
 
 criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
 criterion_rgb_reprojection = RGB_Reprojection_Loss().to(DEVICE)
 criterion_surface_normal_consistency_loss = Surface_Normal_Consistency_Loss().to(DEVICE)
+criterion_planar = new_Piecewise_Planar_Loss().to(DEVICE)
+criterion_feature_reprojection = Feature_Reprojection_Loss().to(DEVICE)
 
 backbone_params = []
 head_params = []
@@ -72,7 +74,9 @@ def train():
         
         train_loss = 0.0
         train_rgb_loss = 0.0
+        train_feature_loss = 0.0
         train_edge_smooth_loss = 0.0
+        train_planner = 0.0
 
         epoch_start_time = time.time()
 
@@ -88,38 +92,40 @@ def train():
 
             OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, False)
 
-            DISP = OUTPUTS['DISP']
-            XYZ = OUTPUTS['XYZ']
             PREV_MATRIX = OUTPUTS['PREV_MATRIX']
             NEXT_MATRIX = OUTPUTS['NEXT_MATRIX']
+            FEATURE = OUTPUTS['FEATURE']
+
+            loss_rgb_reproj = 0.0
+            loss_surface = 0.0
+            loss_edge_smoothloss = 0.0
+            loss_planar = 0.0
+            loss_feature_reproj = 0.0
 
             # -------------------------------------------------------------------
-            # edge loss
+            # RGB 재투영과 smooth loss
             # -------------------------------------------------------------------
-            loss_edge_smoothloss, _ = criterion_edge_smooth(DISP, curr_image_vis)
+            for i in range(4):
+                proj_rgb_prev, valid_mask_prev = get_projected_image(curr_image_vis, prev_image_vis, OUTPUTS['XYZ'][i], PREV_MATRIX)
+                proj_rgb_next, valid_mask_next = get_projected_image(curr_image_vis, next_image_vis, OUTPUTS['XYZ'][i], NEXT_MATRIX)
 
-            # -------------------------------------------------------------------
-            # RGB 재투영
-            # -------------------------------------------------------------------
-            proj_rgb_prev, valid_mask_prev = get_projected_image(curr_image_vis, prev_image_vis, XYZ, PREV_MATRIX)
-            proj_rgb_next, valid_mask_next = get_projected_image(curr_image_vis, next_image_vis, XYZ, NEXT_MATRIX)
+                final_mask_prev = valid_mask_prev
+                final_mask_next = valid_mask_next
 
-            final_mask_prev = valid_mask_prev
-            final_mask_next = valid_mask_next
-
-            loss_rgb_reproj = criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev, final_mask_prev, proj_rgb_next, final_mask_next)
-
-            # -------------------------------------------------------------------
-            # surface loss
-            # -------------------------------------------------------------------
-            loss_surface = criterion_surface_normal_consistency_loss(XYZ, curr_image_vis)
+                loss_rgb_reproj += criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev, final_mask_prev, proj_rgb_next, final_mask_next)
+                loss_surface += criterion_surface_normal_consistency_loss(OUTPUTS['XYZ'][i], curr_image_vis)
+                loss_edge_smoothloss += criterion_edge_smooth(OUTPUTS['DISP'][i], curr_image_vis)
+                loss_planar += criterion_planar(OUTPUTS['DISP'][i], curr_image_vis)
+                loss_feature_reproj += criterion_feature_reprojection(FEATURE[1], FEATURE[0], final_mask_prev, FEATURE[2], final_mask_next)
 
             # 가중치 설정
             weight_rgb = 1.0
-            weight_smooth = 0.001
-            weight_surface = 0.001
-            
-            total_loss = (loss_rgb_reproj * weight_rgb) + (loss_edge_smoothloss * weight_smooth) + (loss_surface * weight_surface)
+            weight_smooth = 0.01
+            weight_surface = 0.05
+            weight_planar = 0.05
+            weight_feature = 1.0
+
+            total_loss = ((loss_rgb_reproj * weight_rgb) + (loss_edge_smoothloss * weight_smooth) + (loss_surface * weight_surface) + (loss_planar * weight_planar) + (loss_feature_reproj * weight_feature)) / 4
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -134,14 +140,18 @@ def train():
             train_loss += total_loss.item()
             train_edge_smooth_loss += loss_edge_smoothloss.item()
             train_rgb_loss += loss_rgb_reproj.item()
+            train_planner += loss_planar.item()
+            train_feature_loss += loss_feature_reproj.item()
 
         avg_train_loss = train_loss / len(dataloader)
         avg_train_smooth_loss = train_edge_smooth_loss / len(dataloader)
         avg_rgb_loss = train_rgb_loss / len(dataloader)
+        avg_planner_loss = train_planner / len(dataloader)
+        avg_feature_loss = train_feature_loss / len(dataloader)
 
         epoch_end_time = time.time()
         scheduler.step()
-        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train RGB reproj Loss : {avg_rgb_loss:4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Time : {epoch_end_time-epoch_start_time:.4f}')
+        print(f'==> Epoch {epoch} 완료 Train Loss : {avg_train_loss:.4f} Train RGB reproj Loss : {avg_rgb_loss:4f} Train Smooth Loss : {avg_train_smooth_loss:.4f} Train Planner Loss : {avg_planner_loss:4f} Train Feature Loss : {avg_feature_loss:4f} Time : {epoch_end_time-epoch_start_time:.4f}')
 
         if epoch % WEIGHT_SAVE_INTERVEL == 0:
             save_path = os.path.join(model_save_path, f'model_epoch_{epoch}.pth')

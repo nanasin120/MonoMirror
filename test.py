@@ -1,6 +1,6 @@
 import torch
 from models.MonoMirror_v3 import MonoMirror_v3
-from data.ImageDataset import ImageDataset
+from dataset.ImageDataset import ImageDataset
 import open3d as o3d
 from defs import visualize_points
 
