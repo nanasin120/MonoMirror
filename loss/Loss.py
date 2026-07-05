@@ -110,8 +110,8 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
         # 이미지 색상이 변하면 깊이 평활화를 꺼버림 (exp(-색상변화))
         # 색상 변화가 클수록 가중치가 0에 가까워져서 Smooth Loss가 무시됨
         # [B, 1, H, W-1], [B, 1, H-1, W]
-        weight_x = torch.exp(-img_dx * 100.0)
-        weight_y = torch.exp(-img_dy * 100.0)
+        weight_x = torch.exp(-img_dx * 50.0)
+        weight_y = torch.exp(-img_dy * 50.0)
 
         edge_mask_x = 1.0 - weight_x
         edge_mask_y = 1.0 - weight_y
@@ -372,8 +372,8 @@ class RGB_Reprojection_Loss(nn.Module): # 재투영한 특징값 Loss
         rgb_loss_p = self.pe(curr_image_vis, proj_img_prev)
         rgb_loss_n = self.pe(curr_image_vis, proj_img_next)
         
-        rgb_loss_p[~mask_img_prev.bool()] = float('inf')
-        rgb_loss_n[~mask_img_next.bool()] = float('inf')
+        rgb_loss_p[~mask_img_prev.bool()] = float(9999.0)
+        rgb_loss_n[~mask_img_next.bool()] = float(9999.0)
         
         min_rgb_loss = torch.minimum(rgb_loss_p, rgb_loss_n)
 

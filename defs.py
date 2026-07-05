@@ -5,31 +5,61 @@ import torchvision.utils as vutils
 import os
 import numpy as np
 
-def save_fixed_sample_v4(model, dataset, epoch, save_path, device):
+def get_XYZ(Z, fx, fy, H, W):
+    device = Z.device
+    y, x = torch.meshgrid(
+        torch.arange(H, device=device), 
+        torch.arange(W, device=device), 
+        indexing='ij'
+    )
+
+    u_flat = (x.float() + 0.5).view(-1, 1)
+    v_flat = (y.float() + 0.5).view(-1, 1)
+
+    Z = Z.view(Z.shape[0], -1, 1)
+
+    cx = W // 2
+    cy = H // 2
+
+    fx = fx.view(-1, 1, 1)
+    fy = fy.view(-1, 1, 1)
+
+    X = (u_flat - cx) * Z / fx
+    Y = (v_flat - cy) * Z / fy
+
+    XYZ = torch.cat([X, Y, Z], dim=-1) # 최종 3D 좌표 [B, 50176, 3]
+
+    return XYZ
+
+def save_fixed_sample(model, dataset, epoch, save_path, device): # 항상 같은 이미지로만 하기 위해 새로 추출
     model.eval()
     with torch.no_grad():
         sample = dataset[0]
 
-        prev_image_vis = sample['prev_image_vis'].unsqueeze(0).to(device)
-        curr_image_vis = sample['curr_image_vis'].unsqueeze(0).to(device)
-        next_image_vis = sample['next_image_vis'].unsqueeze(0).to(device)
+        prev_image_vis = sample['IMAGE_VIS'][0].unsqueeze(0).to(device)
+        curr_image_vis = sample['IMAGE_VIS'][1].unsqueeze(0).to(device)
+        next_image_vis = sample['IMAGE_VIS'][2].unsqueeze(0).to(device)
 
-        prev_image_model = sample['prev_image_model'].unsqueeze(0).to(device)
-        curr_image_model = sample['curr_image_model'].unsqueeze(0).to(device)
-        next_image_model = sample['next_image_model'].unsqueeze(0).to(device)
+        _, _, H, W = curr_image_vis.shape
 
-        B, C, H, W = prev_image_vis.shape
+        prev_image_model = sample['IMAGE_MODEL'][0].unsqueeze(0).to(device)
+        curr_image_model = sample['IMAGE_MODEL'][1].unsqueeze(0).to(device)
+        next_image_model = sample['IMAGE_MODEL'][2].unsqueeze(0).to(device)
 
-        OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, True)
+        curr_fx = sample['CURR_F'][0].to(device).unsqueeze(0)
+        curr_fy = sample['CURR_F'][1].to(device).unsqueeze(0)
+        curr_K = [curr_fx, curr_fy]
+
+        OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, curr_K, True)
         
-        CURR_XYZ = OUTPUTS['XYZ'][-1]
-        CURR_DISP = OUTPUTS['DISP'][-1]
-        PREV_MATRIX = OUTPUTS['PREV_MATRIX']
-        NEXT_MATRIX = OUTPUTS['NEXT_MATRIX']
+        DISP = OUTPUTS['DISP'][-1]
+        XYZ = get_XYZ(1 / (DISP + 1e-6), curr_fx, curr_fy, H, W)
+        PREV_MATRIX = OUTPUTS['MATRIX_CURR_PREV'][0]
+        NEXT_MATRIX = OUTPUTS['MATRIX_CURR_NEXT'][0]
 
         # RGB 재투영 (224x224)
-        proj_img_p2c, mask_p2c = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
-        proj_img_n2c, mask_n2c = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
+        proj_img_p2c, mask_p2c = get_projected_image(curr_image_vis, prev_image_vis, XYZ, PREV_MATRIX)
+        proj_img_n2c, mask_n2c = get_projected_image(curr_image_vis, next_image_vis, XYZ, NEXT_MATRIX)
 
         error_p2c = (torch.abs(curr_image_vis - proj_img_p2c) * mask_p2c)
         error_n2c = (torch.abs(curr_image_vis - proj_img_n2c) * mask_n2c)
@@ -37,7 +67,7 @@ def save_fixed_sample_v4(model, dataset, epoch, save_path, device):
         error_p2c[0] = error_p2c[0].mean(dim=0)
         error_n2c[0] = error_n2c[0].mean(dim=0)
 
-        viz_d_curr = get_depth_viz(CURR_DISP, curr_image_vis)
+        viz_d_curr = get_depth_viz(DISP, curr_image_vis)
 
         # 1행: 과거, 현재, 미래 (입력값)
         row1 = torch.cat([prev_image_vis[0], curr_image_vis[0], next_image_vis[0]], dim=2) 
@@ -50,100 +80,6 @@ def save_fixed_sample_v4(model, dataset, epoch, save_path, device):
         
         vutils.save_image(combined, os.path.join(save_path, f'vis_epoch_{epoch}.png'))
         print(f"saved V4 3x3 grid image: vis_epoch_{epoch}.png")
-
-def save_fixed_sample_v5(model, dataset, epoch, save_path, device):
-    model.eval()
-    with torch.no_grad():
-        # 고정된 첫 번째 데이터 가져오기
-        sample = dataset[0]
-
-        prev_image_vis = sample['prev_image_vis'].unsqueeze(0).to(device)
-        curr_image_vis = sample['curr_image_vis'].unsqueeze(0).to(device)
-        next_image_vis = sample['next_image_vis'].unsqueeze(0).to(device)
-
-        prev_image_model = sample['prev_image_model'].unsqueeze(0).to(device)
-        curr_image_model = sample['curr_image_model'].unsqueeze(0).to(device)
-        next_image_model = sample['next_image_model'].unsqueeze(0).to(device)
-
-        OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, True)
-        
-        # V4에 맞게 깔끔해진 출력값 추출
-        CURR_XYZ = OUTPUTS['XYZ'][-1]
-        CURR_DISP = OUTPUTS['DISP'][-1]
-        PREV_MATRIX = OUTPUTS['PREV_MATRIX'][-1]
-        NEXT_MATRIX = OUTPUTS['NEXT_MATRIX'][-1]
-
-        # RGB 재투영 (224x224)
-        proj_img_p2c, mask_p2c = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
-        proj_img_n2c, mask_n2c = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
-
-        # [꿀팁] Error Map 계산 (원본과 당겨온 사진의 차이, 0에 가까울수록 검은색)
-        error_p2c = torch.abs(curr_image_vis - proj_img_p2c) * mask_p2c
-        error_n2c = torch.abs(curr_image_vis - proj_img_n2c) * mask_n2c
-
-        # 오직 1장뿐인 소중하고 완벽한 현재 깊이 맵!
-        viz_d_curr = get_depth_viz(CURR_DISP, curr_image_vis)
-
-        # 3x3 그리드 조립
-        # 1행: 과거, 현재, 미래 (입력값)
-        row1 = torch.cat([prev_image_vis[0], curr_image_vis[0], next_image_vis[0]], dim=2) 
-        # 2행: 과거당겨옴, 현재깊이, 미래당겨옴 (핵심 결과)
-        row2 = torch.cat([proj_img_p2c[0], viz_d_curr[0], proj_img_n2c[0]], dim=2)
-        # 3행: 과거에러, 현재원본, 미래에러 (Loss 상태 모니터링)
-        row3 = torch.cat([error_p2c[0], curr_image_vis[0], error_n2c[0]], dim=2)
-
-        combined = torch.cat([row1, row2, row3], dim=1)
-        
-        vutils.save_image(combined, os.path.join(save_path, f'vis_epoch_{epoch}.png'))
-        print(f"saved V4 3x3 grid image: vis_epoch_{epoch}.png")
-
-def save_fixed_sample(model, dataset, epoch, save_path, device, version):
-    model.eval()
-    with torch.no_grad():
-        # 고정된 첫 번째 데이터 가져오기
-        sample = dataset[0]
-
-        prev_image_vis = sample['prev_image_vis'].unsqueeze(0).to(device)
-        curr_image_vis = sample['curr_image_vis'].unsqueeze(0).to(device)
-        next_image_vis = sample['next_image_vis'].unsqueeze(0).to(device)
-
-        prev_image_model = sample['prev_image_model'].unsqueeze(0).to(device)
-        curr_image_model = sample['curr_image_model'].unsqueeze(0).to(device)
-        next_image_model = sample['next_image_model'].unsqueeze(0).to(device)
-
-        # 모델 추론
-        OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, True)
-        
-        # ==========================================================
-        # [핵심 수정] version 분기 삭제 및 D -> DISP 이름 변경
-        # 더 이상 4단계 multi 변수가 없으므로 깔끔하게 바로 꺼냅니다.
-        # ==========================================================
-        CURR_XYZ = OUTPUTS['XYZ'][1]
-        
-        PREV_DISP = OUTPUTS['DISP'][0]
-        CURR_DISP = OUTPUTS['DISP'][1]
-        NEXT_DISP = OUTPUTS['DISP'][2]
-        
-        PREV_MATRIX, NEXT_MATRIX = OUTPUTS['MATRIX'][0], OUTPUTS['MATRIX'][1]
-
-        # 재투영 이미지 생성
-        projected_img_p2c, _ = get_projected_image(curr_image_vis, prev_image_vis, CURR_XYZ, PREV_MATRIX)
-        projected_img_n2c, _ = get_projected_image(curr_image_vis, next_image_vis, CURR_XYZ, NEXT_MATRIX)
-
-        # 깊이(시차) 시각화 텐서 생성
-        viz_d_prev = get_depth_viz(PREV_DISP, prev_image_vis)
-        viz_d_curr = get_depth_viz(CURR_DISP, curr_image_vis)
-        viz_d_next = get_depth_viz(NEXT_DISP, next_image_vis)
-
-        # 3x3 그리드 생성
-        row1 = torch.cat([prev_image_vis[0], curr_image_vis[0], next_image_vis[0]], dim=2) 
-        row2 = torch.cat([viz_d_prev[0], viz_d_curr[0], viz_d_next[0]], dim=2)
-        row3 = torch.cat([projected_img_p2c[0], curr_image_vis[0], projected_img_n2c[0]], dim=2)
-
-        combined = torch.cat([row1, row2, row3], dim=1)
-        
-        vutils.save_image(combined, os.path.join(save_path, f'vis_epoch_{epoch}.png'))
-        print(f"saved 3x3 grid image: vis_epoch_{epoch}.png")
 
 def get_depth_viz(depth_tensor, img_tensor):
     mask = (img_tensor.sum(dim=1, keepdim=True) > 0)
@@ -195,6 +131,8 @@ def get_projected_image(img1, img2, X, MATRIX, cam_H=224, cam_W=224):
     B, _, img_H, img_W = img1.shape
     projected_points = get_projected_points(X, MATRIX)
 
+    bg_mask = ~(img1 == 0).all(dim=1, keepdim=True)
+
     raw_z = projected_points[..., 2]
     z = raw_z.clamp(min=1e-3)
     u = projected_points[..., 0] / z
@@ -212,8 +150,7 @@ def get_projected_image(img1, img2, X, MATRIX, cam_H=224, cam_W=224):
     valid_v = ((grid_v >= -1.0) & (grid_v <= 1.0)).float()
     
     valid_mask = (valid_z * valid_u * valid_v).view(B, 1, img_H, img_W)
-
-    
+    valid_mask = valid_mask * bg_mask
 
     return projected_img, valid_mask
 
