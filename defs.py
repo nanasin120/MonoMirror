@@ -53,7 +53,8 @@ def save_fixed_sample(model, dataset, epoch, save_path, device): # 항상 같은
         OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, curr_K, True)
         
         DISP = OUTPUTS['DISP'][-1]
-        XYZ = get_XYZ(1 / (DISP + 1e-6), curr_fx, curr_fy, H, W)
+        DEPTH = 1 / (DISP + 1e-6)
+        XYZ = get_XYZ(DEPTH, curr_fx, curr_fy, H, W)
         PREV_MATRIX = OUTPUTS['MATRIX_CURR_PREV'][0]
         NEXT_MATRIX = OUTPUTS['MATRIX_CURR_NEXT'][0]
 
