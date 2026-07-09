@@ -46,15 +46,19 @@ def save_fixed_sample(model, dataset, epoch, save_path, device): # 항상 같은
         curr_image_model = sample['IMAGE_MODEL'][1].unsqueeze(0).to(device)
         next_image_model = sample['IMAGE_MODEL'][2].unsqueeze(0).to(device)
 
-        curr_fx = sample['CURR_F'][0].to(device).unsqueeze(0)
-        curr_fy = sample['CURR_F'][1].to(device).unsqueeze(0)
-        curr_K = [curr_fx, curr_fy]
+        fx = sample['F'][:, 0].unsqueeze(0).to(device)
+        fy = sample['F'][:, 1].unsqueeze(0).to(device)
+        K = [fx, fy]
 
-        OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, curr_K, True)
+        cx = sample['C'][:, 0].unsqueeze(0).to(device)
+        cy = sample['C'][:, 1].unsqueeze(0).to(device)
+        C = [cx, cy]
+
+        OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, K, C, True)
         
         DISP = OUTPUTS['DISP'][-1]
         DEPTH = 1 / (DISP + 1e-6)
-        XYZ = get_XYZ(DEPTH, curr_fx, curr_fy, H, W)
+        XYZ = get_XYZ(DEPTH, fx, fy, H, W)
         PREV_MATRIX = OUTPUTS['MATRIX_CURR_PREV'][0]
         NEXT_MATRIX = OUTPUTS['MATRIX_CURR_NEXT'][0]
 

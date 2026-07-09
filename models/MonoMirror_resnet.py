@@ -86,7 +86,7 @@ class ProjectionHead(nn.Module):
             nn.ReLU(inplace=True),
 
             nn.Flatten(),
-            nn.Linear(128 * 2 * 2, 6) # 회전 3, 방향 3
+            nn.Linear(2560, 6) # 회전 3, 방향 3
         )
         nn.init.normal_(self.extrinsic_conv[-1].weight, mean=0.0, std=1e-5)
         nn.init.normal_(self.extrinsic_conv[-1].bias, mean=0.0, std=1e-5)
@@ -154,14 +154,14 @@ class MonoMirror(nn.Module):
         self.depth_Head_2 = DepthHead(in_channel=32)
         self.depth_Head_1 = DepthHead(in_channel=16)
 
-    def forward(self, prev_img, curr_img, next_img, curr_K, sfs=False):
+    def forward(self, prev_img, curr_img, next_img, _K, _C, sfs=False):
         B, C, H, W = curr_img.shape
 
         PREV = self.encoder(prev_img)
         CURR = self.encoder(curr_img)
         NEXT = self.encoder(next_img)
 
-        K = self.get_K(curr_K, H, W)
+        K = self.get_K(_K, _C)
         E_CURR_PREV = self.projection_head(CURR[-1], PREV[-1])
         E_CURR_NEXT = self.projection_head(CURR[-1], NEXT[-1])
 
@@ -190,14 +190,14 @@ class MonoMirror(nn.Module):
             'MATRIX_CURR_NEXT' : [MATRIX_CURR_NEXT],
         }
 
-    def get_K(self, curr_K, H, W):
-        B = curr_K[0].shape[0]
+    def get_K(self, _K, _C):
+        B = _K[0].shape[0]
 
-        K = torch.zeros((B, 3, 3), device=curr_K[0].device)
-        K[:, 0, 0] = curr_K[0]
-        K[:, 1, 1] = curr_K[1]
-        K[:, 0, 2] = W / 2.0
-        K[:, 1, 2] = H / 2.0
+        K = torch.zeros((B, 3, 3), device=_K[0].device)
+        K[:, 0, 0] = _K[0]
+        K[:, 1, 1] = _K[1]
+        K[:, 0, 2] = _C[0]
+        K[:, 1, 2] = _C[1]
         K[:, 2, 2] = 1.0
 
         return K

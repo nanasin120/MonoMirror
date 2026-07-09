@@ -3,7 +3,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from models.MonoMirror_resnet import MonoMirror
-from dataset.ImageDataset import DTU_Dataset
+from dataset.ImageDataset import NYU_Dataset
 from defs import get_projected_image, get_XYZ, save_fixed_sample
 from loss.Loss import Edge_Aware_Smooth_Loss, RGB_Reprojection_Loss
 import os
@@ -23,10 +23,10 @@ IMAGE_SAVE_INTERVEL = 5
 WEIGHT_SAVE_INTERVEL = 20
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-dataset_dir = r'./dataset/DTU_dataset'
-dataset_dir = r'/content/data_local'
+dataset_dir = r'./dataset/nyu_dataset'
+# dataset_dir = r'/content/data_local/nyu_dataset'
 
-full_dataset = DTU_Dataset(dataset_dir, frame_interval=1, H=192, W=256)
+full_dataset = NYU_Dataset(dataset_dir, frame_interval=1, H=240*2, W=320*2)
 
 dataloader = DataLoader(
     dataset=full_dataset,
@@ -84,14 +84,17 @@ def train():
             curr_image_vis = batch['IMAGE_VIS'][1].to(DEVICE)
             next_image_vis = batch['IMAGE_VIS'][2].to(DEVICE)
 
-            curr_fx = batch['CURR_F'][0].to(DEVICE)
-            curr_fy = batch['CURR_F'][1].to(DEVICE)
+            fx = batch['F'][:, 0].to(DEVICE)
+            fy = batch['F'][:, 1].to(DEVICE)
+            K = [fx, fy]
 
-            curr_K = [curr_fx, curr_fy]
+            cx = batch['C'][:, 0].to(DEVICE)
+            cy = batch['C'][:, 1].to(DEVICE)
+            C = [cx, cy]
 
             _, _, H, W = curr_image_vis.shape
 
-            OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, curr_K, False)
+            OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, K, C, False)
 
             PREV_MATRIX = OUTPUTS['MATRIX_CURR_PREV'][0]
             NEXT_MATRIX = OUTPUTS['MATRIX_CURR_NEXT'][0]
@@ -108,7 +111,7 @@ def train():
             # DISPARITY = F.interpolate(DISPARITY, size=(H, W), mode='bilinear', align_corners=False)
 
             DEPTH = 1 / (DISPARITY + 1e-6)
-            XYZ = get_XYZ(DEPTH, curr_fx, curr_fy, H, W)
+            XYZ = get_XYZ(DEPTH, fx, fy, H, W)
 
             proj_rgb_prev, valid_mask_prev = get_projected_image(curr_image_vis, prev_image_vis, XYZ, PREV_MATRIX, H, W)
             proj_rgb_next, valid_mask_next = get_projected_image(curr_image_vis, next_image_vis, XYZ, NEXT_MATRIX, H, W)
