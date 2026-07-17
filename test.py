@@ -1,6 +1,6 @@
 import torch
 from dataset.ImageDataset import DTU_Dataset
-from models.MonoMirror_resnet import MonoMirror
+from models.MonoMirror import MonoMirror
 from torchvision import transforms
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

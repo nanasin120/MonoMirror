@@ -3,7 +3,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from models.MonoMirror import MonoMirror
-from dataset.ImageDataset import DTU_Dataset
+from dataset.ImageDataset import KITTI_Dataset
 from defs import get_projected_image, get_XYZ, save_fixed_sample
 from loss.Loss import Edge_Aware_Smooth_Loss, RGB_Reprojection_Loss
 import os
@@ -14,28 +14,35 @@ if not os.path.exists(model_save_path): os.makedirs(model_save_path)
 img_save_path = r'./save/image_save'
 if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
-BATCH = 4
+BATCH = 8
 START_EPOCH = 0
-END_EPOCH = 50
+END_EPOCH = 500
 ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
 LEARNING_RATE = 1e-4
 IMAGE_SAVE_INTERVEL = 5
 WEIGHT_SAVE_INTERVEL = 20
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-dataset_dir = r'./dataset/DTU_dataset'
-# dataset_dir = r'/content/data_local'
+dataset_dir = r'./dataset/kitti_dataset'
+# dataset_dir = r'/content/data_local/'
 
-full_dataset = DTU_Dataset(dataset_dir, frame_interval=1, H=192, W=256)
+full_dataset = KITTI_Dataset(
+    dataset_dir, 
+    frame_interval = 1, 
+    H = 128, 
+    W = 416,
+    max_samples=100
+)
 
 dataloader = DataLoader(
     dataset=full_dataset,
     batch_size=BATCH,
     shuffle=True,
-    pin_memory=True
+    pin_memory=True,
+    drop_last=True,
 )
 
-model = MonoMirror(H=192, W=256).to(DEVICE)
+model = MonoMirror().to(DEVICE)
 
 criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
 criterion_rgb_reprojection = RGB_Reprojection_Loss().to(DEVICE)
@@ -63,6 +70,9 @@ scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=ADDITIONAL_EPO
 def train():
     print('TRAIN START')
     best_avg_loss = float('inf')
+    
+    weight_rgb = 1.0
+    weight_smooth = 0.001
 
     for epoch in range(START_EPOCH, END_EPOCH + 1):
         model.train()
@@ -72,9 +82,10 @@ def train():
         train_edge_smooth_loss = 0.0
 
         epoch_start_time = time.time()
-
         batch_start_time = time.time()
+
         for batch_idx, batch in enumerate(dataloader):
+
             prev_image_model = batch['IMAGE_MODEL'][0].to(DEVICE)
             curr_image_model = batch['IMAGE_MODEL'][1].to(DEVICE)
             next_image_model = batch['IMAGE_MODEL'][2].to(DEVICE)
@@ -83,17 +94,20 @@ def train():
             curr_image_vis = batch['IMAGE_VIS'][1].to(DEVICE)
             next_image_vis = batch['IMAGE_VIS'][2].to(DEVICE)
 
-            curr_fx = batch['CURR_F'][0].to(DEVICE)
-            curr_fy = batch['CURR_F'][1].to(DEVICE)
+            fx = batch['F'][:, 0].to(DEVICE)
+            fy = batch['F'][:, 1].to(DEVICE)
+            K = [fx, fy]
 
-            curr_K = [curr_fx, curr_fy]
+            cx = batch['C'][:, 0].to(DEVICE)
+            cy = batch['C'][:, 1].to(DEVICE)
+            C = [cx, cy]
 
             _, _, H, W = curr_image_vis.shape
 
-            OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, curr_K, False)
+            OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, K, C, False)
 
-            PREV_MATRIX = OUTPUTS['MATRIX_CURR_PREV'][0].float()
-            NEXT_MATRIX = OUTPUTS['MATRIX_CURR_NEXT'][0].float()
+            PREV_MATRIX = OUTPUTS['MATRIX_CURR_PREV'][0]
+            NEXT_MATRIX = OUTPUTS['MATRIX_CURR_NEXT'][0]
             DISP = OUTPUTS['DISP']
 
             loss_rgb_reproj = 0.0
@@ -102,23 +116,21 @@ def train():
             # -------------------------------------------------------------------
             # RGB 재투영과 smooth loss
             # -------------------------------------------------------------------
-            for i in range(4):
-                DISPARITY = DISP[i].float()
+            for i in range(1, 5):
+                DISPARITY = DISP[i]
                 DISPARITY = F.interpolate(DISPARITY, size=(H, W), mode='bilinear', align_corners=False)
+
                 DEPTH = 1 / (DISPARITY + 1e-6)
-                XYZ = get_XYZ(DEPTH, curr_fx, curr_fy, H, W)
+                XYZ = get_XYZ(DEPTH, fx, fy, cx, cy, H, W)
 
                 proj_rgb_prev, valid_mask_prev = get_projected_image(curr_image_vis, prev_image_vis, XYZ, PREV_MATRIX, H, W)
                 proj_rgb_next, valid_mask_next = get_projected_image(curr_image_vis, next_image_vis, XYZ, NEXT_MATRIX, H, W)
 
-                loss_rgb_reproj += criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev, valid_mask_prev, proj_rgb_next, valid_mask_next)
-                loss_edge_smoothloss += criterion_edge_smooth(DISPARITY, curr_image_vis)
+                loss_rgb_reproj += criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev, valid_mask_prev, proj_rgb_next, valid_mask_next) / 4
+            
+                loss_edge_smoothloss += criterion_edge_smooth(DISPARITY, curr_image_vis) / 4
 
-            # 가중치 설정
-            weight_rgb = 1.0
-            weight_smooth = 0.001
-
-            total_loss = ((loss_rgb_reproj * weight_rgb) + (loss_edge_smoothloss * weight_smooth)) / 4
+            total_loss = (loss_rgb_reproj * weight_rgb) + (loss_edge_smoothloss * weight_smooth)
 
             optimizer.zero_grad()
             total_loss.backward()

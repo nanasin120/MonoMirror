@@ -5,7 +5,7 @@ import torchvision.utils as vutils
 import os
 import numpy as np
 
-def get_XYZ(Z, fx, fy, H, W):
+def get_XYZ(Z, fx, fy, cx, cy, H, W):
     device = Z.device
     y, x = torch.meshgrid(
         torch.arange(H, device=device), 
@@ -13,16 +13,15 @@ def get_XYZ(Z, fx, fy, H, W):
         indexing='ij'
     )
 
-    u_flat = (x.float() + 0.5).view(-1, 1)
-    v_flat = (y.float() + 0.5).view(-1, 1)
+    u_flat = (x.float()).view(-1, 1)
+    v_flat = (y.float()).view(-1, 1)
 
     Z = Z.view(Z.shape[0], -1, 1)
 
-    cx = W // 2
-    cy = H // 2
-
     fx = fx.view(-1, 1, 1)
     fy = fy.view(-1, 1, 1)
+    cx = cx.view(-1, 1, 1)
+    cy = cy.view(-1, 1, 1)
 
     X = (u_flat - cx) * Z / fx
     Y = (v_flat - cy) * Z / fy
@@ -46,31 +45,25 @@ def save_fixed_sample(model, dataset, epoch, save_path, device): # 항상 같은
         curr_image_model = sample['IMAGE_MODEL'][1].unsqueeze(0).to(device)
         next_image_model = sample['IMAGE_MODEL'][2].unsqueeze(0).to(device)
 
-        fx = sample['F'][:, 0].unsqueeze(0).to(device)
-        fy = sample['F'][:, 1].unsqueeze(0).to(device)
+        fx = sample['F'][0].unsqueeze(0).to(device)
+        fy = sample['F'][1].unsqueeze(0).to(device)
         K = [fx, fy]
 
-        cx = sample['C'][:, 0].unsqueeze(0).to(device)
-        cy = sample['C'][:, 1].unsqueeze(0).to(device)
+        cx = sample['C'][0].unsqueeze(0).to(device)
+        cy = sample['C'][1].unsqueeze(0).to(device)
         C = [cx, cy]
 
         OUTPUTS = model(prev_image_model, curr_image_model, next_image_model, K, C, True)
         
         DISP = OUTPUTS['DISP'][-1]
         DEPTH = 1 / (DISP + 1e-6)
-        XYZ = get_XYZ(DEPTH, fx, fy, H, W)
+        XYZ = get_XYZ(DEPTH, fx, fy, cx, cy, H, W)
         PREV_MATRIX = OUTPUTS['MATRIX_CURR_PREV'][0]
         NEXT_MATRIX = OUTPUTS['MATRIX_CURR_NEXT'][0]
 
         # RGB 재투영 (224x224)
-        proj_img_p2c, mask_p2c = get_projected_image(curr_image_vis, prev_image_vis, XYZ, PREV_MATRIX)
-        proj_img_n2c, mask_n2c = get_projected_image(curr_image_vis, next_image_vis, XYZ, NEXT_MATRIX)
-
-        error_p2c = (torch.abs(curr_image_vis - proj_img_p2c) * mask_p2c)
-        error_n2c = (torch.abs(curr_image_vis - proj_img_n2c) * mask_n2c)
-
-        error_p2c[0] = error_p2c[0].mean(dim=0)
-        error_n2c[0] = error_n2c[0].mean(dim=0)
+        proj_img_p2c, mask_p2c = get_projected_image(curr_image_vis, prev_image_vis, XYZ, PREV_MATRIX, H, W)
+        proj_img_n2c, mask_n2c = get_projected_image(curr_image_vis, next_image_vis, XYZ, NEXT_MATRIX, H, W)
 
         viz_d_curr = get_depth_viz(DISP, curr_image_vis)
 
@@ -78,8 +71,8 @@ def save_fixed_sample(model, dataset, epoch, save_path, device): # 항상 같은
         row1 = torch.cat([prev_image_vis[0], curr_image_vis[0], next_image_vis[0]], dim=2) 
         # 2행: 과거당겨옴, 현재깊이, 미래당겨옴 (핵심 결과)
         row2 = torch.cat([proj_img_p2c[0], viz_d_curr[0], proj_img_n2c[0]], dim=2)
-        # 3행: 과거에러, 현재원본, 미래에러 (Loss 상태 모니터링)
-        row3 = torch.cat([error_p2c[0], curr_image_vis[0], error_n2c[0]], dim=2)
+
+        row3 = torch.cat([mask_p2c[0].repeat(3, 1, 1), torch.ones_like(viz_d_curr[0]), mask_n2c[0].repeat(3, 1, 1)], dim=2)
 
         combined = torch.cat([row1, row2, row3], dim=1)
         
@@ -136,97 +129,22 @@ def get_projected_image(img1, img2, X, MATRIX, cam_H=224, cam_W=224):
     B, _, img_H, img_W = img1.shape
     projected_points = get_projected_points(X, MATRIX)
 
-    bg_mask = ~(img1 == 0).all(dim=1, keepdim=True)
-
     raw_z = projected_points[..., 2]
+
     z = raw_z.clamp(min=1e-3)
     u = projected_points[..., 0] / z
     v = projected_points[..., 1] / z
 
-    # 0.5를 더하는 로직을 추가했기에 (W-1)이 아닌 W로 나눔
-    grid_u = (u / cam_W) * 2.0 - 1.0
-    grid_v = (v / cam_H) * 2.0 - 1.0
+    grid_u = (u / (cam_W-1)) * 2.0 - 1.0
+    grid_v = (v / (cam_H-1)) * 2.0 - 1.0
     grid = torch.stack([grid_u, grid_v], dim=-1).view(B, img_H, img_W, 2)
 
-    projected_img = F.grid_sample(img2, grid, mode='bilinear', padding_mode='zeros', align_corners=False)
+    projected_img = F.grid_sample(img2, grid, mode='bilinear', padding_mode='border', align_corners=False)
 
     valid_z = (raw_z > 0).float()
     valid_u = ((grid_u >= -1.0) & (grid_u <= 1.0)).float()
     valid_v = ((grid_v >= -1.0) & (grid_v <= 1.0)).float()
     
-    valid_mask = (valid_z * valid_u * valid_v).view(B, 1, img_H, img_W)
-    valid_mask = valid_mask * bg_mask
+    valid_mask = (valid_z).view(B, 1, img_H, img_W)
 
     return projected_img, valid_mask
-
-def visualize_points(X, image, z_scale=1.0):
-    X = X.detach().cpu().numpy().reshape(-1, 3)
-    image = image.detach().cpu()
-    colors = image.permute(1, 2, 0).reshape(-1, 3).numpy()
-
-    valid_mask = (0.1 < X[:, 2]) & (X[:, 2] < 0.7) # 깊이값 이상치 제거
-    
-    X = X[valid_mask]
-    colors = colors[valid_mask]
-    
-    X[:, 2] = X[:, 2] * z_scale
-    X[:, 1] = X[:, 1] * -1.0
-
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(X)
-    pcd.colors = o3d.utility.Vector3dVector(colors)
-
-    o3d.visualization.draw_geometries([pcd])
-
-def visualize_points_(X, image, z_scale=1.0):
-    X = X.detach().cpu().numpy().reshape(-1, 3)
-    image = image.detach().cpu()
-    colors = image.permute(1, 2, 0).reshape(-1, 3).numpy()
-
-    # 1. 깊이 필터링
-    valid_mask = (0.1 < X[:, 2]) & (X[:, 2] < 1.0)
-    X = X[valid_mask]
-    colors = colors[valid_mask]
-    
-    # 2. 축 조정
-    X[:, 2] = X[:, 2] * z_scale
-    X[:, 1] = X[:, 1] * -1.0
-
-    # 3. [강제 평탄화] 가장 낮은 Z(사실상 깊이) 영역을 찾아 수평으로 맞춤
-    # 점군 중 y값이 가장 작은(바닥인) 점들의 평균을 잡아 수평 벡터로 삼음
-    bottom_points = X[X[:, 1] > np.percentile(X[:, 1], 90)] # 책상 바닥 샘플링
-    
-    # 책상의 기울기를 수동으로 보정 (0.1은 튜닝 가능)
-    # y축(높이)이 컵의 중심을 향하도록 강제 회전
-    angle = np.radians(-25) # 이 값을 조절하며 책상이 평평해지는 지점을 찾으세요!
-    R = np.array([
-        [1, 0, 0],
-        [0, np.cos(angle), -np.sin(angle)],
-        [0, np.sin(angle), np.cos(angle)]
-    ])
-    X = X @ R.T
-
-    # 4. 시각화
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(X)
-    pcd.colors = o3d.utility.Vector3dVector(colors)
-    o3d.visualization.draw_geometries([pcd])
-
-def load_croco_weights_to_dust3r(model, checkpoint_path):
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
-    pretrained_dict = checkpoint['model_state_dict']
-
-    model_dict = model.state_dict()
-
-    matched_dict = {}
-
-    for k, v in pretrained_dict.items():
-        dust3r_key = f"CroCo_Encoder.{k}"
-
-        if dust3r_key in model_dict:
-            if v.shape == model_dict[dust3r_key].shape: matched_dict[dust3r_key] = v
-        else:
-            pass
-
-    model_dict.update(matched_dict)
-    model.load_state_dict(model_dict)

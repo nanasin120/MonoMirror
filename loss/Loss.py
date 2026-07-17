@@ -110,16 +110,8 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
         # 이미지 색상이 변하면 깊이 평활화를 꺼버림 (exp(-색상변화))
         # 색상 변화가 클수록 가중치가 0에 가까워져서 Smooth Loss가 무시됨
         # [B, 1, H, W-1], [B, 1, H-1, W]
-        weight_x = torch.exp(-img_dx * 50.0)
-        weight_y = torch.exp(-img_dy * 50.0)
-
-        edge_mask_x = 1.0 - weight_x
-        edge_mask_y = 1.0 - weight_y
-
-        edge_mask_x_padded = F.pad(edge_mask_x, (0, 1, 0, 0), mode='replicate')
-        edge_mask_y_padded = F.pad(edge_mask_y, (0, 0, 0, 1), mode='replicate')
-
-        texture_mask = torch.maximum(edge_mask_x_padded, edge_mask_y_padded)
+        weight_x = torch.exp(-img_dx * 1.0)
+        weight_y = torch.exp(-img_dy * 1.0)
 
         pad_mask = (img.sum(dim=1, keepdim=True) > 0).float()
         mask_x = pad_mask[:, :, :, :-1] * pad_mask[:, :, :, 1:]
@@ -368,7 +360,7 @@ class RGB_Reprojection_Loss(nn.Module): # 재투영한 특징값 Loss
         self.pe = photometric_error()
 
     def forward(self, curr_image_vis, prev_image_vis, next_image_vis, proj_img_prev, mask_img_prev, proj_img_next, mask_img_next):
-        # [B, 3, H, W] -> 3채널 오차의 평균을 내어 [B, 1, H, W]로 변환 (아직 공간 H, W 평균은 내면 안 됨!)
+        # [B, 3, H, W] -> 3채널 오차의 평균을 내어 [B, 1, H, W]로 변환
         rgb_loss_p = self.pe(curr_image_vis, proj_img_prev)
         rgb_loss_n = self.pe(curr_image_vis, proj_img_next)
         
