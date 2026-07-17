@@ -19,19 +19,19 @@ START_EPOCH = 0
 END_EPOCH = 500
 ADDITIONAL_EPOCH = END_EPOCH-START_EPOCH
 LEARNING_RATE = 1e-4
-IMAGE_SAVE_INTERVEL = 5
-WEIGHT_SAVE_INTERVEL = 20
+IMAGE_SAVE_INTERVEL = 10
+WEIGHT_SAVE_INTERVEL = 50
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 dataset_dir = r'./dataset/kitti_dataset'
-# dataset_dir = r'/content/data_local/'
+dataset_dir = r'/content/data_local/'
 
 full_dataset = KITTI_Dataset(
     dataset_dir, 
-    frame_interval = 1, 
+    frame_interval = 2, 
     H = 128, 
     W = 416,
-    max_samples=100
+    max_samples=128
 )
 
 dataloader = DataLoader(
@@ -47,25 +47,8 @@ model = MonoMirror().to(DEVICE)
 criterion_edge_smooth = Edge_Aware_Smooth_Loss().to(DEVICE)
 criterion_rgb_reprojection = RGB_Reprojection_Loss().to(DEVICE)
 
-backbone_params = []
-head_params = []
-
-for name, param in model.named_parameters():
-    if not param.requires_grad:
-        continue
-        
-    if "encoder" in name:
-        backbone_params.append(param)
-    else:
-        head_params.append(param)
-
-optim_groups = [{'params': head_params, 'lr': 1e-4}]
-
-if len(backbone_params) > 0:
-    optim_groups.append({'params': backbone_params, 'lr': 1e-5})
-
-optimizer = optim.AdamW(optim_groups, weight_decay=1e-4)
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=ADDITIONAL_EPOCH, eta_min=1e-6)
+optimizer = optim.Adam(model.parameters(), lr=1e-4)
+scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[200, 250], gamma=0.1)
 
 def train():
     print('TRAIN START')
@@ -116,21 +99,21 @@ def train():
             # -------------------------------------------------------------------
             # RGB 재투영과 smooth loss
             # -------------------------------------------------------------------
-            for i in range(1, 5):
+            for i in range(0, 4):
                 DISPARITY = DISP[i]
                 DISPARITY = F.interpolate(DISPARITY, size=(H, W), mode='bilinear', align_corners=False)
 
                 DEPTH = 1 / (DISPARITY + 1e-6)
                 XYZ = get_XYZ(DEPTH, fx, fy, cx, cy, H, W)
 
-                proj_rgb_prev, valid_mask_prev = get_projected_image(curr_image_vis, prev_image_vis, XYZ, PREV_MATRIX, H, W)
-                proj_rgb_next, valid_mask_next = get_projected_image(curr_image_vis, next_image_vis, XYZ, NEXT_MATRIX, H, W)
+                proj_img_p2c, mask_p2c = get_projected_image(curr_image_vis, prev_image_vis, XYZ, PREV_MATRIX)
+                proj_img_n2c, mask_n2c = get_projected_image(curr_image_vis, next_image_vis, XYZ, NEXT_MATRIX)
 
-                loss_rgb_reproj += criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_rgb_prev, valid_mask_prev, proj_rgb_next, valid_mask_next) / 4
-            
-                loss_edge_smoothloss += criterion_edge_smooth(DISPARITY, curr_image_vis) / 4
+                loss_rgb_reproj += criterion_rgb_reprojection(curr_image_vis, prev_image_vis, next_image_vis, proj_img_p2c, mask_p2c, proj_img_n2c, mask_n2c)
 
-            total_loss = (loss_rgb_reproj * weight_rgb) + (loss_edge_smoothloss * weight_smooth)
+                loss_edge_smoothloss += criterion_edge_smooth(DISPARITY, curr_image_vis)
+
+            total_loss = ((loss_rgb_reproj * weight_rgb) + (loss_edge_smoothloss * weight_smooth)) / 4.0
 
             optimizer.zero_grad()
             total_loss.backward()

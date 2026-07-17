@@ -17,11 +17,11 @@ class Decoder(nn.Module):
         ])
 
         self.conv_layers = nn.ModuleList([
-            nn.Sequential(nn.Conv2d(512 + 256, 256, kernel_size=3, padding=1), nn.BatchNorm2d(256), nn.ReLU(inplace=True)),
-            nn.Sequential(nn.Conv2d(256 + 128, 128, kernel_size=3, padding=1), nn.BatchNorm2d(128), nn.ReLU(inplace=True)),
-            nn.Sequential(nn.Conv2d(128 + 64, 64, kernel_size=3, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True)),
-            nn.Sequential(nn.Conv2d(64 + 64, 32, kernel_size=3, padding=1), nn.BatchNorm2d(32), nn.ReLU(inplace=True)),
-            nn.Sequential(nn.Conv2d(32, 16, kernel_size=3, padding=1), nn.BatchNorm2d(16), nn.ReLU(inplace=True))
+            nn.Sequential(nn.Conv2d(512 + 256, 256, kernel_size=3, padding=1), nn.BatchNorm2d(256), nn.GELU()),
+            nn.Sequential(nn.Conv2d(256 + 128, 128, kernel_size=3, padding=1), nn.BatchNorm2d(128), nn.GELU()),
+            nn.Sequential(nn.Conv2d(128 + 64, 64, kernel_size=3, padding=1), nn.BatchNorm2d(64), nn.GELU()),
+            nn.Sequential(nn.Conv2d(64 + 64, 32, kernel_size=3, padding=1), nn.BatchNorm2d(32), nn.GELU()),
+            nn.Sequential(nn.Conv2d(32, 16, kernel_size=3, padding=1), nn.BatchNorm2d(16), nn.GELU())
         ])
 
     def forward(self, features):
@@ -49,11 +49,11 @@ class DepthHead(nn.Module):
         self.layer = nn.Sequential( 
             nn.Conv2d(in_channels=in_channel, out_channels=in_channel//2, kernel_size=3, padding=1),
             nn.BatchNorm2d(in_channel//2),
-            nn.ReLU(),
+            nn.GELU(),
 
             nn.Conv2d(in_channels=in_channel//2, out_channels=in_channel//4, kernel_size=3, padding=1),
             nn.BatchNorm2d(in_channel//4),
-            nn.ReLU(),
+            nn.GELU(),
 
             nn.Conv2d(in_channels=in_channel//4, out_channels=1, kernel_size=3, padding=1)
         )
@@ -61,8 +61,8 @@ class DepthHead(nn.Module):
         self.min_disp = min_disp
         self.max_disp = max_disp
 
-        nn.init.normal_(self.layer[-1].weight, mean=0.0, std=1e-5)
-        nn.init.zeros_(self.layer[-1].bias)
+        nn.init.normal_(self.layer[-1].weight, mean=0.0, std=1e-2)
+        nn.init.constant_(self.layer[-1].bias, 0.1)
 
     def forward(self, all_G):
         out = self.layer(all_G) # [B, 1, 224, 224]
@@ -93,11 +93,11 @@ class ProjectionHead(nn.Module):
         self.adaptive_pool = nn.AdaptiveAvgPool2d(1)
         self.pose_head = nn.Sequential(
             nn.Linear(512, 256),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Linear(256, 6) # 회전 3, 이동 3
         )
 
-        nn.init.normal_(self.pose_head[-1].weight, mean=0.0, std=1e-5)
+        nn.init.normal_(self.pose_head[-1].weight, mean=0.0, std=1e-2)
         nn.init.zeros_(self.pose_head[-1].bias)
 
     def forward(self, From_Image, To_Image):
@@ -123,10 +123,10 @@ class ProjectionHead(nn.Module):
         x = torch.flatten(x, 1)    # [B, 512]
         pose = self.pose_head(x)   # [B, 6]
 
-        axis_angle = torch.tanh(pose[:, :3]) * 3.14159 / 3.0 # -3.14159 ~ 3.14159
+        axis_angle = torch.tanh(pose[:, :3]) * 0.01 # -3.14159 ~ 3.14159
         R = axis_angle_to_matrix(axis_angle) # [B, 3, 3]
         
-        translation = torch.tanh(pose[:, 3:6]) * 1.0
+        translation = torch.tanh(pose[:, 3:6]) * 0.01 # -0.1 ~ 0.1
         
         E = torch.eye(4, device=From_Image.device).unsqueeze(0).repeat(B, 1, 1) # [B, 4, 4]
         E[:, :3, :3] = R
@@ -166,10 +166,9 @@ class MonoMirror(nn.Module):
         
         self.projection_head = ProjectionHead()
 
-        self.d_min = 1 / 80.0
+        self.d_min = 1 / 100.0
         self.d_max = 1 / 0.1
 
-        self.depth_Head_16 = DepthHead(in_channel=256, min_disp=self.d_min, max_disp=self.d_max)
         self.depth_Head_8 = DepthHead(in_channel=128, min_disp=self.d_min, max_disp=self.d_max)
         self.depth_Head_4 = DepthHead(in_channel=64, min_disp=self.d_min, max_disp=self.d_max)
         self.depth_Head_2 = DepthHead(in_channel=32, min_disp=self.d_min, max_disp=self.d_max)
@@ -186,7 +185,6 @@ class MonoMirror(nn.Module):
 
         CURR_F = self.decoder(CURR)
 
-        DISP_16 = self.depth_Head_16(CURR_F[0])
         DISP_8 = self.depth_Head_8(CURR_F[1])
         DISP_4 = self.depth_Head_4(CURR_F[2])
         DISP_2 = self.depth_Head_2(CURR_F[3])
@@ -204,7 +202,7 @@ class MonoMirror(nn.Module):
             print(f"---------------------------------")
 
         return {
-            'DISP' : [DISP_16, DISP_8, DISP_4, DISP_2, DISP_1],
+            'DISP' : [DISP_8, DISP_4, DISP_2, DISP_1],
             'MATRIX_CURR_PREV' : [MATRIX_CURR_PREV],
             'MATRIX_CURR_NEXT' : [MATRIX_CURR_NEXT],
         }

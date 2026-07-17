@@ -110,8 +110,8 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
         # 이미지 색상이 변하면 깊이 평활화를 꺼버림 (exp(-색상변화))
         # 색상 변화가 클수록 가중치가 0에 가까워져서 Smooth Loss가 무시됨
         # [B, 1, H, W-1], [B, 1, H-1, W]
-        weight_x = torch.exp(-img_dx * 1.0)
-        weight_y = torch.exp(-img_dy * 1.0)
+        weight_x = torch.exp(-img_dx * 10.0)
+        weight_y = torch.exp(-img_dy * 10.0)
 
         pad_mask = (img.sum(dim=1, keepdim=True) > 0).float()
         mask_x = pad_mask[:, :, :, :-1] * pad_mask[:, :, :, 1:]
@@ -122,9 +122,10 @@ class Edge_Aware_Smooth_Loss(nn.Module): # 원본 이미지를 참조하는 Smoo
         smoothness_x = disp_dx * weight_x * mask_x
         smoothness_y = disp_dy * weight_y * mask_y
 
-        smoothness_loss = (smoothness_x.sum() + smoothness_y.sum()) / (mask_x.sum() + mask_y.sum() + 1e-8)
+        loss_x = smoothness_x.sum() / (mask_x.sum() + 1e-7)
+        loss_y = smoothness_y.sum() / (mask_y.sum() + 1e-7)
 
-        return smoothness_loss
+        return loss_x + loss_y
 
 class SSIM(nn.Module): # 두 이미지가 얼마나 비슷한가
     def __init__(self, window_size = 3, C1 = 0.01 ** 2, C2 = 0.03 ** 2):
@@ -359,24 +360,54 @@ class RGB_Reprojection_Loss(nn.Module): # 재투영한 특징값 Loss
         super(RGB_Reprojection_Loss, self).__init__()
         self.pe = photometric_error()
 
-    def forward(self, curr_image_vis, prev_image_vis, next_image_vis, proj_img_prev, mask_img_prev, proj_img_next, mask_img_next):
-        # [B, 3, H, W] -> 3채널 오차의 평균을 내어 [B, 1, H, W]로 변환
-        rgb_loss_p = self.pe(curr_image_vis, proj_img_prev)
-        rgb_loss_n = self.pe(curr_image_vis, proj_img_next)
+    def forward(self, 
+            curr_image: torch.Tensor,   # [B, 3, H, W]
+            prev_image: torch.Tensor,   # [B, 3, H, W]
+            next_image: torch.Tensor,   # [B, 3, H, W]
+            proj_img_p2c: torch.Tensor, # [B, 3, H, W]
+            mask_p2c: torch.Tensor,     # [B, 1, H, W]
+            proj_img_n2c: torch.Tensor, # [B, 3, H, W]
+            mask_n2c: torch.Tensor      # [B, 1, H, W]
+        ):
+        """
+            RGB 재투영 손실 계산
+
+            Args:
+                curr_image: 현재 이미지
+                prev_image: 이전 이미지
+                next_image: 다음 이미지
+                proj_img_p2c: 이전 이미지에서 현재 이미지로 재투영한 이미지
+                mask_p2c: 이전 이미지에서 현재 이미지로 재투영한 이미지의 유효한 픽셀 마스크
+                proj_img_n2c: 다음 이미지에서 현재 이미지로 재투영한 이미지
+                mask_n2c: 다음 이미지에서 현재 이미지로 재투영한 이미지의 유효한 픽셀 마스크
+            
+            Returns:
+                loss_rgb_reproj: 최종 RGB 재투영 손실
+        """
+
+        # 현재 이미지와 재투영한 이미지간의 광도 오차, 클수록 오차가 크다는것
+        rgb_loss_p = self.pe(curr_image, proj_img_p2c)
+        rgb_loss_n = self.pe(curr_image, proj_img_n2c)
         
-        rgb_loss_p[~mask_img_prev.bool()] = float(9999.0)
-        rgb_loss_n[~mask_img_next.bool()] = float(9999.0)
+        # 유효하지 않은 픽셀 처리
+        rgb_loss_p[~mask_p2c.bool()] = float(9999.0)
+        rgb_loss_n[~mask_n2c.bool()] = float(9999.0)
         
+        # 두 재투영 이미지 중 최소 오차 선택
         min_rgb_loss = torch.minimum(rgb_loss_p, rgb_loss_n)
 
-        source_loss_p = self.pe(curr_image_vis, prev_image_vis)
-        source_loss_n = self.pe(curr_image_vis, next_image_vis)
-        
+        # 현재 이미지와 원본 이미지간의 광도 오차, 클수록 오차가 크다는것
+        source_loss_p = self.pe(curr_image, prev_image)
+        source_loss_n = self.pe(curr_image, next_image)
+
+        # 두 원본 이미지 중 최소 오차 선택
         min_source_loss = torch.minimum(source_loss_p, source_loss_n)
 
+        # 최종 오차 선택 (재투영 오차와 원본 오차 중 최소값)
         final_loss = torch.minimum(min_rgb_loss, min_source_loss)
         
-        valid_mask_rgb_any = (mask_img_prev.bool() | mask_img_next.bool()).float()
+        # 최종 Loss 계산
+        valid_mask_rgb_any = (mask_p2c.bool() | mask_n2c.bool()).float()
         loss_rgb_reproj = (final_loss * valid_mask_rgb_any).sum() / (valid_mask_rgb_any.sum() + 1e-8)
         
         return loss_rgb_reproj
